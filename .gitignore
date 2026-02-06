@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Secrets & credentials
+.env
+credentials.json
+
+# Runtime data
+messages.json
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp / build
+/tmp/
+
+# Legacy
+passphrase.json

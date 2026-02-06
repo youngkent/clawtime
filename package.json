@@ -1,0 +1,29 @@
+{
+  "name": "clawtime",
+  "version": "1.0.0",
+  "description": "Self-hosted webchat UI for OpenClaw with 3D avatars, voice mode, and passkey auth",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "openclaw",
+    "chat",
+    "webchat",
+    "avatar",
+    "voice",
+    "webauthn",
+    "passkey"
+  ],
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "Keyun Tong <tongkeyun@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/youngkent/clawtime"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "^13.2.2",
+    "ws": "^8.19.0"
+  }
+}

@@ -1,0 +1,14 @@
+[Unit]
+Description=ClawTime Cloudflare Tunnel
+After=network-online.target clawtime.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.openclaw/workspace/clawtime/scripts/tunnel.sh
+Restart=always
+RestartSec=10
+Environment="CLAWTIME_DIR=%h/.clawtime"
+
+[Install]
+WantedBy=default.target
