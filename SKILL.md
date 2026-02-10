@@ -358,6 +358,79 @@ journalctl --user -u clawtime-tunnel | grep trycloudflare | tail -1
 | Visual states | 🎤 Recording → ⏳ Transcribing → Bot thinking → Bot speaking |
 | Auto-resync | Voice mode state re-syncs after WebSocket reconnection |
 
+## Task Panel
+
+ClawTime includes a task panel for tracking your work. **Use this as your canonical task list** — don't maintain a separate TODO.md.
+
+### Setup
+
+Tasks are enabled by default. The task file is stored at `~/.clawtime/tasks.json`.
+
+### File Format
+
+Tasks use markdown format with sections:
+
+```markdown
+# Tasks
+
+## Active
+- 🟡 Task you're working on right now
+- 🟡 Another active task
+
+## Blocked
+- ⏳ Task waiting on someone else
+- ⏳ Task waiting for external input
+
+## Backlog
+- Task to do later tonight
+- Another future task
+
+## Done
+- ✅ Completed task
+- ✅ Another completed task
+```
+
+### Section Meanings
+
+| Section | Meaning |
+|---------|---------|
+| **Active** | Currently working on — should be doing these NOW |
+| **Blocked** | Waiting for input from user or external dependency |
+| **Backlog** | Will work on later (e.g., tonight) |
+| **Done** | Completed tasks (hidden in UI to reduce clutter) |
+
+### Keeping Tasks in Sync
+
+1. **Use ClawTime tasks as your single source of truth** — don't maintain separate task files
+2. **Update via file or UI** — both work:
+   ```bash
+   # Direct file edit
+   cat > ~/.clawtime/tasks.json << 'EOF'
+   # Tasks
+   
+   ## Active
+   - 🟡 My current task
+   EOF
+   ```
+3. **User can check/uncheck tasks in UI** — changes persist to file
+4. **Read tasks before starting work:**
+   ```bash
+   cat ~/.clawtime/tasks.json
+   ```
+5. **Move tasks between sections** as status changes:
+   - Start working → move to Active
+   - Waiting on someone → move to Blocked
+   - Done → move to Done (or check off in UI)
+
+### Task Icons
+
+| Icon | Meaning |
+|------|---------|
+| 🟡 | Active/pending task |
+| ⏳ | Blocked/waiting task |
+| ✅ | Completed task |
+| `- [x]` | Also marks as done |
+
 ## Key Files
 
 | Path | Purpose |
@@ -366,6 +439,7 @@ journalctl --user -u clawtime-tunnel | grep trycloudflare | tail -1
 | `~/.clawtime/config.json` | Avatar selection, preferences |
 | `~/.clawtime/credentials.json` | Passkey data |
 | `~/.clawtime/avatars/` | Custom avatars |
+| `~/.clawtime/tasks.json` | Task list (markdown format) |
 
 ## Troubleshooting
 
