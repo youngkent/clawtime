@@ -1,6 +1,6 @@
 // ─── Version check: force reload if cached JS doesn't match HTML version ───
 (function() {
-  var JS_VERSION = '20260211f';
+  var JS_VERSION = '20260211g';
   console.log('[ClawTime] JS loaded, version:', JS_VERSION);
   if (window.CLAWTIME_VERSION && window.CLAWTIME_VERSION !== JS_VERSION) {
     console.log('[ClawTime] Version mismatch, forcing reload');
@@ -3551,7 +3551,8 @@ function startCall() {
     window.voiceMode = true;
     localStorage.setItem('clawtime_voice', 'true');
     callOverlay.classList.add('active');
-    messagesEl.style.paddingTop = '50px'; // Make room for voice bar
+    messagesEl.style.paddingTop = '60px'; // Make room for voice bar
+    messagesEl.scrollTop = messagesEl.scrollHeight; // Keep scroll at bottom
     // Notify server to enable TTS
     console.log('[Voice] Sending voice_mode:true to server');
     if (ws && ws.readyState === 1) secureSend(JSON.stringify({ type: 'voice_mode', enabled: true }));
