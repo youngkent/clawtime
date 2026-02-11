@@ -1,6 +1,6 @@
 // ─── Version check: force reload if cached JS doesn't match HTML version ───
 (function() {
-  var JS_VERSION = '20260211g';
+  var JS_VERSION = '20260211h';
   console.log('[ClawTime] JS loaded, version:', JS_VERSION);
   if (window.CLAWTIME_VERSION && window.CLAWTIME_VERSION !== JS_VERSION) {
     console.log('[ClawTime] Version mismatch, forcing reload');

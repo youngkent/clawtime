@@ -1088,13 +1088,13 @@ body {
 /* ─── Live Talk / Voice Call Overlay ─── */
 /* ═══════════════════════════════════════ */
 
-/* Call overlay - right below separator bar */
+/* Call overlay - pinned at top of messages, full width bar */
 #callOverlay {
   position: absolute;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(13, 17, 23, 0.9);
+  top: 0;
+  left: 0;
+  right: 0;
+  background: rgba(13, 17, 23, 0.95);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   z-index: 50;
@@ -1102,9 +1102,8 @@ body {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  padding: 8px 16px;
-  border: 1px solid rgba(249, 115, 22, 0.4);
-  border-radius: 20px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(249, 115, 22, 0.4);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.3s ease;
