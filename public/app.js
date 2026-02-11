@@ -1,6 +1,6 @@
 // ─── Version check: force reload if cached JS doesn't match HTML version ───
 (function() {
-  var JS_VERSION = '20260210g';
+  var JS_VERSION = '20260211e';
   console.log('[ClawTime] JS loaded, version:', JS_VERSION);
   if (window.CLAWTIME_VERSION && window.CLAWTIME_VERSION !== JS_VERSION) {
     console.log('[ClawTime] Version mismatch, forcing reload');
@@ -204,14 +204,18 @@ function updateSendBtn() {
 
 // ─── Initialize ───
 async function init() {
+  console.log('[Auth] init() starting');
   await loadConfig();
+  console.log('[Auth] loadConfig done');
 
   sessionToken = localStorage.getItem('clawtime_session');
+  console.log('[Auth] checking /auth/status');
 
   try {
     var controller = new AbortController();
     var timeoutId = setTimeout(function() { controller.abort(); }, 5000);
     var res = await fetch('/auth/status?_=' + Date.now(), { signal: controller.signal, cache: 'no-store' });
+    console.log('[Auth] /auth/status response:', res.status);
     clearTimeout(timeoutId);
     var data = await res.json();
     isRegistered = data.registered;
@@ -807,6 +811,756 @@ function processChatEvent(msg) {
   }
 }
 
+// ─── Widget System ───
+var activeWidgets = new Map(); // id -> { element, data, type }
+
+function sendWidgetResponse(id, widgetType, value, action) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  var response = {
+    type: 'widget_response',
+    id: id,
+    widget: widgetType,
+    value: value,
+    action: action || 'submit'
+  };
+  ws.send(JSON.stringify(response));
+  console.log('[Widget] Sent response:', response);
+}
+
+function renderWidget(widgetData) {
+  var id = widgetData.id;
+  var type = widgetData.widget;
+  var data = widgetData.data || {};
+  var inline = widgetData.inline || false;
+  
+  // Check if updating existing widget
+  var existing = activeWidgets.get(id);
+  if (existing && type === 'progress') {
+    // Update progress in place
+    updateProgressWidget(existing.element, data);
+    return existing.element;
+  }
+  
+  var container = document.createElement('div');
+  container.className = 'widget widget-' + type + (inline ? ' widget-inline' : '');
+  container.dataset.widgetId = id;
+  container.dataset.widgetType = type;
+  
+  switch (type) {
+    case 'buttons':
+      renderButtonsWidget(container, id, data);
+      break;
+    case 'confirm':
+      renderConfirmWidget(container, id, data);
+      break;
+    case 'code':
+      renderCodeWidget(container, id, data);
+      break;
+    case 'progress':
+      renderProgressWidget(container, id, data);
+      break;
+    case 'form':
+      renderFormWidget(container, id, data);
+      break;
+    case 'datepicker':
+      renderDatepickerWidget(container, id, data);
+      break;
+    case 'carousel':
+      renderCarouselWidget(container, id, data);
+      break;
+    case 'map':
+      renderMapWidget(container, id, data);
+      break;
+    default:
+      container.textContent = '[Unknown widget: ' + type + ']';
+  }
+  
+  activeWidgets.set(id, { element: container, data: data, type: type });
+  
+  // Add to messages area
+  var welcome = messagesEl.querySelector('.welcome');
+  if (welcome) welcome.remove();
+  messagesEl.appendChild(container);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  
+  return container;
+}
+
+function renderButtonsWidget(container, id, data) {
+  if (data.prompt) {
+    var prompt = document.createElement('div');
+    prompt.className = 'widget-prompt';
+    prompt.textContent = data.prompt;
+    container.appendChild(prompt);
+  }
+  
+  var btnGroup = document.createElement('div');
+  btnGroup.className = 'widget-btn-group' + (data.layout === 'vertical' ? ' vertical' : '');
+  
+  var options = data.options || [];
+  options.forEach(function(opt) {
+    var btn = document.createElement('button');
+    btn.className = 'widget-btn';
+    
+    if (typeof opt === 'string') {
+      btn.textContent = opt;
+      btn.dataset.value = opt;
+    } else {
+      btn.textContent = opt.label || opt.value;
+      btn.dataset.value = opt.value !== undefined ? opt.value : opt.label;
+      if (opt.style === 'primary') btn.classList.add('primary');
+      if (opt.style === 'secondary') btn.classList.add('secondary');
+      if (opt.style === 'danger') btn.classList.add('danger');
+    }
+    
+    btn.addEventListener('click', function() {
+      if (container.classList.contains('disabled')) return;
+      
+      if (data.multiSelect) {
+        btn.classList.toggle('selected');
+      } else {
+        // Single select - disable widget and send response
+        container.classList.add('disabled');
+        btn.classList.add('selected');
+        sendWidgetResponse(id, 'buttons', btn.dataset.value, 'submit');
+      }
+    });
+    
+    btnGroup.appendChild(btn);
+  });
+  
+  container.appendChild(btnGroup);
+  
+  if (data.multiSelect) {
+    var submitBtn = document.createElement('button');
+    submitBtn.className = 'widget-btn primary widget-submit';
+    submitBtn.textContent = 'Submit';
+    submitBtn.addEventListener('click', function() {
+      if (container.classList.contains('disabled')) return;
+      var selected = Array.from(btnGroup.querySelectorAll('.selected')).map(function(b) {
+        return b.dataset.value;
+      });
+      container.classList.add('disabled');
+      sendWidgetResponse(id, 'buttons', selected, 'submit');
+    });
+    container.appendChild(submitBtn);
+  }
+}
+
+function renderConfirmWidget(container, id, data) {
+  if (data.title) {
+    var title = document.createElement('div');
+    title.className = 'widget-title';
+    title.textContent = data.title;
+    container.appendChild(title);
+  }
+  
+  if (data.message) {
+    var msg = document.createElement('div');
+    msg.className = 'widget-message';
+    msg.textContent = data.message;
+    container.appendChild(msg);
+  }
+  
+  var btnGroup = document.createElement('div');
+  btnGroup.className = 'widget-btn-group';
+  
+  var cancelBtn = document.createElement('button');
+  cancelBtn.className = 'widget-btn secondary';
+  cancelBtn.textContent = data.cancelLabel || 'Cancel';
+  cancelBtn.addEventListener('click', function() {
+    if (container.classList.contains('disabled')) return;
+    container.classList.add('disabled');
+    sendWidgetResponse(id, 'confirm', false, 'cancel');
+  });
+  
+  var confirmBtn = document.createElement('button');
+  confirmBtn.className = 'widget-btn ' + (data.confirmStyle === 'danger' ? 'danger' : 'primary');
+  confirmBtn.textContent = data.confirmLabel || 'Confirm';
+  confirmBtn.addEventListener('click', function() {
+    if (container.classList.contains('disabled')) return;
+    container.classList.add('disabled');
+    sendWidgetResponse(id, 'confirm', true, 'submit');
+  });
+  
+  btnGroup.appendChild(cancelBtn);
+  btnGroup.appendChild(confirmBtn);
+  container.appendChild(btnGroup);
+}
+
+function renderCodeWidget(container, id, data) {
+  if (data.filename) {
+    var header = document.createElement('div');
+    header.className = 'widget-code-header';
+    header.textContent = data.filename;
+    container.appendChild(header);
+  }
+  
+  var pre = document.createElement('pre');
+  pre.className = 'widget-code-block';
+  if (data.language) pre.dataset.language = data.language;
+  if (data.wrap) pre.style.whiteSpace = 'pre-wrap';
+  
+  var code = document.createElement('code');
+  code.textContent = data.code || '';
+  pre.appendChild(code);
+  container.appendChild(pre);
+  
+  var actions = document.createElement('div');
+  actions.className = 'widget-code-actions';
+  
+  if (data.showCopy !== false) {
+    var copyBtn = document.createElement('button');
+    copyBtn.className = 'widget-btn small';
+    copyBtn.innerHTML = '📋 Copy';
+    copyBtn.addEventListener('click', function() {
+      navigator.clipboard.writeText(data.code || '').then(function() {
+        copyBtn.innerHTML = '✓ Copied';
+        setTimeout(function() { copyBtn.innerHTML = '📋 Copy'; }, 2000);
+        sendWidgetResponse(id, 'code', null, 'copy');
+      });
+    });
+    actions.appendChild(copyBtn);
+  }
+  
+  if (data.showRun) {
+    var runBtn = document.createElement('button');
+    runBtn.className = 'widget-btn small primary';
+    runBtn.innerHTML = '▶ Run';
+    runBtn.addEventListener('click', function() {
+      sendWidgetResponse(id, 'code', null, 'run');
+    });
+    actions.appendChild(runBtn);
+  }
+  
+  container.appendChild(actions);
+}
+
+function renderProgressWidget(container, id, data) {
+  if (data.label) {
+    var label = document.createElement('div');
+    label.className = 'widget-progress-label';
+    label.textContent = data.label;
+    container.appendChild(label);
+  }
+  
+  var barOuter = document.createElement('div');
+  barOuter.className = 'widget-progress-bar';
+  
+  var barInner = document.createElement('div');
+  barInner.className = 'widget-progress-fill';
+  if (data.percent != null) {
+    barInner.style.width = data.percent + '%';
+  } else {
+    barInner.classList.add('indeterminate');
+  }
+  
+  barOuter.appendChild(barInner);
+  container.appendChild(barOuter);
+  
+  var footer = document.createElement('div');
+  footer.className = 'widget-progress-footer';
+  
+  if (data.status) {
+    var status = document.createElement('span');
+    status.className = 'widget-progress-status';
+    status.textContent = data.status;
+    footer.appendChild(status);
+  }
+  
+  if (data.showPercent && data.percent != null) {
+    var pct = document.createElement('span');
+    pct.className = 'widget-progress-percent';
+    pct.textContent = data.percent + '%';
+    footer.appendChild(pct);
+  }
+  
+  if (data.cancelable) {
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'widget-btn small secondary';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', function() {
+      container.classList.add('disabled');
+      sendWidgetResponse(id, 'progress', null, 'cancel');
+    });
+    footer.appendChild(cancelBtn);
+  }
+  
+  container.appendChild(footer);
+}
+
+function renderDatepickerWidget(container, id, data) {
+  if (data.label) {
+    var label = document.createElement('div');
+    label.className = 'widget-prompt';
+    label.textContent = data.label;
+    container.appendChild(label);
+  }
+  
+  var inputWrap = document.createElement('div');
+  inputWrap.className = 'widget-datepicker-wrap';
+  
+  var input = document.createElement('input');
+  input.className = 'widget-form-input widget-datepicker-input';
+  input.type = data.type || 'date'; // date, time, datetime-local
+  if (data.value) input.value = data.value;
+  if (data.min) input.min = data.min;
+  if (data.max) input.max = data.max;
+  input.dataset.fieldName = 'value';
+  inputWrap.appendChild(input);
+  container.appendChild(inputWrap);
+  
+  var btnGroup = document.createElement('div');
+  btnGroup.className = 'widget-btn-group';
+  
+  var submitBtn = document.createElement('button');
+  submitBtn.className = 'widget-btn primary';
+  submitBtn.textContent = data.submitLabel || 'Select';
+  submitBtn.addEventListener('click', function() {
+    if (container.classList.contains('disabled')) return;
+    if (data.required && !input.value) {
+      input.classList.add('widget-form-error');
+      return;
+    }
+    container.classList.add('disabled');
+    sendWidgetResponse(id, 'datepicker', input.value, 'submit');
+  });
+  
+  btnGroup.appendChild(submitBtn);
+  container.appendChild(btnGroup);
+}
+
+function renderCarouselWidget(container, id, data) {
+  var items = data.items || [];
+  if (items.length === 0) return;
+  
+  var currentIndex = 0;
+  
+  var carousel = document.createElement('div');
+  carousel.className = 'widget-carousel';
+  
+  var viewport = document.createElement('div');
+  viewport.className = 'widget-carousel-viewport';
+  
+  var track = document.createElement('div');
+  track.className = 'widget-carousel-track';
+  
+  items.forEach(function(item, idx) {
+    var slide = document.createElement('div');
+    slide.className = 'widget-carousel-slide';
+    
+    if (item.type === 'image' || item.image || item.url) {
+      var img = document.createElement('img');
+      img.src = item.url || item.image;
+      img.alt = item.caption || item.title || '';
+      slide.appendChild(img);
+    }
+    
+    if (item.title || item.caption || item.description) {
+      var info = document.createElement('div');
+      info.className = 'widget-carousel-info';
+      if (item.title) {
+        var title = document.createElement('div');
+        title.className = 'widget-carousel-title';
+        title.textContent = item.title;
+        info.appendChild(title);
+      }
+      if (item.caption || item.description) {
+        var desc = document.createElement('div');
+        desc.className = 'widget-carousel-desc';
+        desc.textContent = item.caption || item.description;
+        info.appendChild(desc);
+      }
+      slide.appendChild(info);
+    }
+    
+    if (data.selectable) {
+      slide.style.cursor = 'pointer';
+      slide.addEventListener('click', function() {
+        if (container.classList.contains('disabled')) return;
+        container.classList.add('disabled');
+        sendWidgetResponse(id, 'carousel', { index: idx, item: item }, 'submit');
+      });
+    }
+    
+    track.appendChild(slide);
+  });
+  
+  viewport.appendChild(track);
+  carousel.appendChild(viewport);
+  
+  function goTo(idx) {
+    currentIndex = Math.max(0, Math.min(items.length - 1, idx));
+    track.style.transform = 'translateX(-' + (currentIndex * 100) + '%)';
+    updateDots();
+  }
+  
+  if (data.showArrows !== false && items.length > 1) {
+    var prevBtn = document.createElement('button');
+    prevBtn.className = 'widget-carousel-arrow prev';
+    prevBtn.innerHTML = '‹';
+    prevBtn.addEventListener('click', function() { goTo(currentIndex - 1); });
+    carousel.appendChild(prevBtn);
+    
+    var nextBtn = document.createElement('button');
+    nextBtn.className = 'widget-carousel-arrow next';
+    nextBtn.innerHTML = '›';
+    nextBtn.addEventListener('click', function() { goTo(currentIndex + 1); });
+    carousel.appendChild(nextBtn);
+  }
+  
+  var dots;
+  function updateDots() {
+    if (!dots) return;
+    var dotEls = dots.querySelectorAll('.widget-carousel-dot');
+    dotEls.forEach(function(d, i) {
+      d.classList.toggle('active', i === currentIndex);
+    });
+  }
+  
+  if (data.showDots !== false && items.length > 1) {
+    dots = document.createElement('div');
+    dots.className = 'widget-carousel-dots';
+    items.forEach(function(_, idx) {
+      var dot = document.createElement('button');
+      dot.className = 'widget-carousel-dot' + (idx === 0 ? ' active' : '');
+      dot.addEventListener('click', function() { goTo(idx); });
+      dots.appendChild(dot);
+    });
+    carousel.appendChild(dots);
+  }
+  
+  container.appendChild(carousel);
+}
+
+function renderMapWidget(container, id, data) {
+  if (data.label) {
+    var label = document.createElement('div');
+    label.className = 'widget-prompt';
+    label.textContent = data.label;
+    container.appendChild(label);
+  }
+  
+  var mapDiv = document.createElement('div');
+  mapDiv.className = 'widget-map';
+  mapDiv.id = 'map-' + id;
+  container.appendChild(mapDiv);
+  
+  // Load Leaflet if not loaded
+  function initMap() {
+    var lat = data.lat || data.center?.[0] || 37.7749;
+    var lng = data.lng || data.center?.[1] || -122.4194;
+    var zoom = data.zoom || 13;
+    
+    var map = L.map(mapDiv.id).setView([lat, lng], zoom);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+    
+    var marker = null;
+    var selectedLocation = null;
+    
+    if (data.marker || data.value) {
+      var mLat = data.marker?.lat || data.value?.lat || lat;
+      var mLng = data.marker?.lng || data.value?.lng || lng;
+      marker = L.marker([mLat, mLng]).addTo(map);
+      selectedLocation = { lat: mLat, lng: mLng };
+    }
+    
+    if (data.selectable !== false) {
+      map.on('click', function(e) {
+        if (container.classList.contains('disabled')) return;
+        selectedLocation = { lat: e.latlng.lat, lng: e.latlng.lng };
+        if (marker) {
+          marker.setLatLng(e.latlng);
+        } else {
+          marker = L.marker(e.latlng).addTo(map);
+        }
+      });
+    }
+    
+    // Add confirm button
+    var btnGroup = document.createElement('div');
+    btnGroup.className = 'widget-btn-group widget-map-buttons';
+    
+    var submitBtn = document.createElement('button');
+    submitBtn.className = 'widget-btn primary';
+    submitBtn.textContent = data.submitLabel || 'Select Location';
+    submitBtn.addEventListener('click', function() {
+      if (container.classList.contains('disabled')) return;
+      if (!selectedLocation) {
+        alert('Please click on the map to select a location');
+        return;
+      }
+      container.classList.add('disabled');
+      sendWidgetResponse(id, 'map', selectedLocation, 'submit');
+    });
+    btnGroup.appendChild(submitBtn);
+    container.appendChild(btnGroup);
+    
+    // Fix map size after render
+    setTimeout(function() { map.invalidateSize(); }, 100);
+  }
+  
+  if (typeof L !== 'undefined') {
+    initMap();
+  } else {
+    // Load Leaflet CSS
+    var css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(css);
+    
+    // Load Leaflet JS
+    var script = document.createElement('script');
+    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    script.onload = initMap;
+    document.head.appendChild(script);
+  }
+}
+
+function applyWidgetResponse(container, widgetType, data, response) {
+  container.classList.add('disabled');
+  
+  switch (widgetType) {
+    case 'buttons':
+      // Highlight the selected button
+      var buttons = container.querySelectorAll('.widget-btn');
+      buttons.forEach(function(btn) {
+        if (btn.dataset.value === response.value || 
+            (Array.isArray(response.value) && response.value.includes(btn.dataset.value))) {
+          btn.classList.add('selected');
+        }
+      });
+      break;
+    case 'confirm':
+      // Show which option was chosen
+      var btns = container.querySelectorAll('.widget-btn');
+      btns.forEach(function(btn) {
+        if ((response.value && btn.classList.contains('primary')) ||
+            (!response.value && btn.classList.contains('secondary'))) {
+          btn.classList.add('selected');
+        }
+      });
+      break;
+    case 'form':
+      // Fill in the form values
+      if (response.value && typeof response.value === 'object') {
+        Object.keys(response.value).forEach(function(key) {
+          var input = container.querySelector('[data-field-name="' + key + '"]');
+          if (input) {
+            if (input.type === 'checkbox') {
+              input.checked = !!response.value[key];
+            } else if (input._isRadioGroup) {
+              var radio = input.querySelector('input[value="' + response.value[key] + '"]');
+              if (radio) radio.checked = true;
+            } else {
+              input.value = response.value[key] || '';
+            }
+          }
+        });
+      }
+      break;
+    case 'datepicker':
+      var dateInput = container.querySelector('.widget-datepicker-input');
+      if (dateInput && response.value) {
+        dateInput.value = response.value;
+      }
+      break;
+    case 'carousel':
+      if (response.value && typeof response.value.index === 'number') {
+        var slides = container.querySelectorAll('.widget-carousel-slide');
+        if (slides[response.value.index]) {
+          slides[response.value.index].style.outline = '3px solid var(--accent)';
+        }
+      }
+      break;
+    case 'map':
+      // Map will show marker at selected location when re-rendered
+      break;
+    // code and progress don't need special response handling
+  }
+}
+
+function updateProgressWidget(container, data) {
+  var fill = container.querySelector('.widget-progress-fill');
+  if (fill) {
+    if (data.percent != null) {
+      fill.style.width = data.percent + '%';
+      fill.classList.remove('indeterminate');
+    } else {
+      fill.classList.add('indeterminate');
+    }
+  }
+  
+  var label = container.querySelector('.widget-progress-label');
+  if (label && data.label) label.textContent = data.label;
+  
+  var status = container.querySelector('.widget-progress-status');
+  if (status && data.status) status.textContent = data.status;
+  
+  var pct = container.querySelector('.widget-progress-percent');
+  if (pct && data.percent != null) pct.textContent = data.percent + '%';
+}
+
+function renderFormWidget(container, id, data) {
+  if (data.title) {
+    var title = document.createElement('div');
+    title.className = 'widget-title';
+    title.textContent = data.title;
+    container.appendChild(title);
+  }
+  
+  var form = document.createElement('div');
+  form.className = 'widget-form-fields';
+  
+  var fields = data.fields || [];
+  fields.forEach(function(field) {
+    var fieldDiv = document.createElement('div');
+    fieldDiv.className = 'widget-form-field';
+    
+    if (field.label) {
+      var label = document.createElement('label');
+      label.className = 'widget-form-label';
+      label.textContent = field.label;
+      if (field.required) {
+        var req = document.createElement('span');
+        req.className = 'widget-form-required';
+        req.textContent = ' *';
+        label.appendChild(req);
+      }
+      fieldDiv.appendChild(label);
+    }
+    
+    var input;
+    switch (field.type) {
+      case 'textarea':
+        input = document.createElement('textarea');
+        input.className = 'widget-form-input widget-form-textarea';
+        input.rows = field.rows || 3;
+        break;
+      case 'select':
+        input = document.createElement('select');
+        input.className = 'widget-form-input widget-form-select';
+        (field.options || []).forEach(function(opt) {
+          var option = document.createElement('option');
+          if (typeof opt === 'string') {
+            option.value = opt;
+            option.textContent = opt;
+          } else {
+            option.value = opt.value;
+            option.textContent = opt.label || opt.value;
+          }
+          input.appendChild(option);
+        });
+        break;
+      case 'checkbox':
+        var checkWrap = document.createElement('div');
+        checkWrap.className = 'widget-form-checkbox-wrap';
+        input = document.createElement('input');
+        input.type = 'checkbox';
+        input.className = 'widget-form-checkbox';
+        var checkLabel = document.createElement('span');
+        checkLabel.textContent = field.checkLabel || '';
+        checkWrap.appendChild(input);
+        checkWrap.appendChild(checkLabel);
+        fieldDiv.appendChild(checkWrap);
+        input._isCheckbox = true;
+        break;
+      case 'radio':
+        var radioGroup = document.createElement('div');
+        radioGroup.className = 'widget-form-radio-group';
+        (field.options || []).forEach(function(opt, idx) {
+          var radioWrap = document.createElement('label');
+          radioWrap.className = 'widget-form-radio-wrap';
+          var radio = document.createElement('input');
+          radio.type = 'radio';
+          radio.name = 'field-' + field.name;
+          radio.value = typeof opt === 'string' ? opt : opt.value;
+          var radioLabel = document.createElement('span');
+          radioLabel.textContent = typeof opt === 'string' ? opt : (opt.label || opt.value);
+          radioWrap.appendChild(radio);
+          radioWrap.appendChild(radioLabel);
+          radioGroup.appendChild(radioWrap);
+        });
+        fieldDiv.appendChild(radioGroup);
+        input = radioGroup;
+        input._isRadioGroup = true;
+        break;
+      default:
+        input = document.createElement('input');
+        input.type = field.type || 'text';
+        input.className = 'widget-form-input';
+    }
+    
+    if (!input._isCheckbox && !input._isRadioGroup) {
+      if (field.placeholder) input.placeholder = field.placeholder;
+      if (field.value) input.value = field.value;
+      if (field.required) input.required = true;
+      fieldDiv.appendChild(input);
+    }
+    
+    input.dataset.fieldName = field.name;
+    form.appendChild(fieldDiv);
+  });
+  
+  container.appendChild(form);
+  
+  var btnGroup = document.createElement('div');
+  btnGroup.className = 'widget-btn-group widget-form-buttons';
+  
+  var cancelBtn = document.createElement('button');
+  cancelBtn.className = 'widget-btn secondary';
+  cancelBtn.textContent = data.cancelLabel || 'Cancel';
+  cancelBtn.addEventListener('click', function() {
+    if (container.classList.contains('disabled')) return;
+    container.classList.add('disabled');
+    sendWidgetResponse(id, 'form', null, 'cancel');
+  });
+  
+  var submitBtn = document.createElement('button');
+  submitBtn.className = 'widget-btn primary';
+  submitBtn.textContent = data.submitLabel || 'Submit';
+  submitBtn.addEventListener('click', function() {
+    if (container.classList.contains('disabled')) return;
+    
+    var values = {};
+    var valid = true;
+    
+    fields.forEach(function(field) {
+      var el = form.querySelector('[data-field-name="' + field.name + '"]');
+      if (!el) return;
+      
+      if (el._isCheckbox) {
+        values[field.name] = el.checked;
+      } else if (el._isRadioGroup) {
+        var checked = el.querySelector('input:checked');
+        values[field.name] = checked ? checked.value : null;
+      } else if (field.type === 'number' || field.type === 'range') {
+        values[field.name] = el.value ? parseFloat(el.value) : null;
+      } else {
+        values[field.name] = el.value;
+      }
+      
+      if (field.required && !values[field.name]) {
+        valid = false;
+        el.classList.add('widget-form-error');
+      } else {
+        el.classList.remove('widget-form-error');
+      }
+    });
+    
+    if (!valid) return;
+    
+    container.classList.add('disabled');
+    sendWidgetResponse(id, 'form', values, 'submit');
+  });
+  
+  btnGroup.appendChild(cancelBtn);
+  btnGroup.appendChild(submitBtn);
+  container.appendChild(btnGroup);
+}
+
 // ─── Speech preview (live transcription in chat area) ───
 var speechPreviewEl = null;
 
@@ -1303,6 +2057,12 @@ function connectWs() {
           var text = '';
           var images = [];
 
+          // Check for widget in history
+          if (historyMsg.widget) {
+            historyMessages.push({ role: 'bot', widget: historyMsg.widget, timestamp: historyMsg.timestamp || null });
+            continue;
+          }
+
           if (historyMsg.text !== undefined) {
             // New store format — simple text field
             text = historyMsg.text || '';
@@ -1336,7 +2096,14 @@ function connectWs() {
 
         for (var i = historyIndex; i < historyMessages.length; i++) {
           var m = historyMessages[i];
-          if (m.images && m.images.length > 0) {
+          if (m.widget) {
+            // Render widget from history
+            var widgetEl = renderWidget({ id: m.widget.id, widget: m.widget.widget, data: m.widget.data });
+            // If already responded, show response state and disable
+            if (m.widget.response && widgetEl) {
+              applyWidgetResponse(widgetEl, m.widget.widget, m.widget.data, m.widget.response);
+            }
+          } else if (m.images && m.images.length > 0) {
             addImageMessage(m.text, m.role, m.images[0], { timestamp: m.timestamp, noScroll: true });
           } else {
             addMessage(m.text, m.role, { timestamp: m.timestamp, noScroll: true });
@@ -1363,6 +2130,12 @@ function connectWs() {
       // Handle avatar state updates from server (during tool calls)
       if (msg.type === 'avatar_state' && window.setAvatarState) {
         setAvatarState(msg.state);
+      }
+
+      // Handle widget messages
+      if (msg.type === 'widget') {
+        renderWidget(msg);
+        return;
       }
 
       if (msg.type === 'chat') {
@@ -2503,11 +3276,13 @@ callOverlay.innerHTML = '' +
 // Whisper mode state for voice calls
 var callUseWhisper = true; // Whisper mode enabled by default
 
-// Append overlay to separator (centered between avatar and chat)
+// Element references for avatar panel interactions
 var avatarPanelEl = document.getElementById('avatarPanel');
 var chatMainEl = document.querySelector('.chat-main');
 var dragSeparatorEl = document.getElementById('dragSeparator');
-if (dragSeparatorEl) dragSeparatorEl.appendChild(callOverlay);
+
+// Append overlay to chat-main (positioned at top of messages area)
+if (chatMainEl) chatMainEl.appendChild(callOverlay);
 
 // ── Call button (overlaid on avatar) ──
 // Call button removed — voice mode uses the 🔊 button in avatar-buttons

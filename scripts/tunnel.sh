@@ -4,6 +4,27 @@
 
 set -e
 
+# Exponential backoff on repeated failures
+BACKOFF_FILE="/tmp/clawtime-tunnel-backoff"
+MAX_BACKOFF=3600  # Max 1 hour
+
+if [ -f "$BACKOFF_FILE" ]; then
+    LAST_FAIL=$(cat "$BACKOFF_FILE" | cut -d: -f1)
+    FAIL_COUNT=$(cat "$BACKOFF_FILE" | cut -d: -f2)
+    NOW=$(date +%s)
+    
+    # Calculate backoff: 30s, 60s, 120s, 240s... up to MAX_BACKOFF
+    BACKOFF=$((30 * (2 ** (FAIL_COUNT - 1))))
+    [ $BACKOFF -gt $MAX_BACKOFF ] && BACKOFF=$MAX_BACKOFF
+    
+    ELAPSED=$((NOW - LAST_FAIL))
+    if [ $ELAPSED -lt $BACKOFF ]; then
+        WAIT=$((BACKOFF - ELAPSED))
+        echo "[tunnel] Rate limit backoff: waiting ${WAIT}s (attempt $FAIL_COUNT)"
+        sleep $WAIT
+    fi
+fi
+
 CLAWTIME_DIR="${CLAWTIME_DIR:-$HOME/.clawtime}"
 CLAWTIME_ENV="$CLAWTIME_DIR/.env"
 LOG_FILE="/tmp/clawtime-tunnel.log"
@@ -51,8 +72,21 @@ TUNNEL_URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG_FILE" | hea
 if [ -z "$TUNNEL_URL" ]; then
     error "Failed to get tunnel URL"
     cat "$LOG_FILE"
+    
+    # Record failure for backoff
+    if [ -f "$BACKOFF_FILE" ]; then
+        FAIL_COUNT=$(cat "$BACKOFF_FILE" | cut -d: -f2)
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    else
+        FAIL_COUNT=1
+    fi
+    echo "$(date +%s):$FAIL_COUNT" > "$BACKOFF_FILE"
+    
     exit 1
 fi
+
+# Success - reset backoff
+rm -f "$BACKOFF_FILE"
 
 DOMAIN=$(echo "$TUNNEL_URL" | sed 's|https://||')
 log "Tunnel URL: $TUNNEL_URL"

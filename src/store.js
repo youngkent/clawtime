@@ -31,7 +31,7 @@ export function loadMessages() {
 
 /**
  * Save a message to the store (append-only).
- * @param {{ role: 'user'|'bot', text: string, images?: string[], timestamp?: string }} msg
+ * @param {{ role: 'user'|'bot', text: string, images?: string[], widget?: object, timestamp?: string }} msg
  * @returns {object} The saved message with id and timestamp
  */
 export function saveMessage(msg) {
@@ -44,6 +44,9 @@ export function saveMessage(msg) {
   };
   if (msg.images && msg.images.length > 0) {
     entry.images = msg.images;
+  }
+  if (msg.widget) {
+    entry.widget = msg.widget;
   }
   messages.push(entry);
   try {
@@ -63,6 +66,28 @@ export function getMessages(limit = 200) {
   const messages = loadMessages();
   if (messages.length <= limit) return messages;
   return messages.slice(-limit);
+}
+
+/**
+ * Save a widget response - updates the widget message with the response data.
+ * @param {string} widgetId - The widget ID
+ * @param {{ value: any, action: string }} response - The response data
+ */
+export function saveWidgetResponse(widgetId, response) {
+  const messages = loadMessages();
+  // Find the widget message (search from end since recent is most likely)
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].widget && messages[i].widget.id === widgetId) {
+      messages[i].widget.response = response;
+      try {
+        fs.writeFileSync(STORE_PATH, JSON.stringify(messages, null, 2), 'utf8');
+      } catch (err) {
+        console.error('[store] Failed to save widget response:', err.message);
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

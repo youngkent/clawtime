@@ -32,7 +32,7 @@ import { auditLog } from './security.js';
 import { cleanExpiredSessions, ipMatches } from './helpers.js';
 import { generateAndSendTTS } from './tts.js';
 import { transcribeAudio } from './stt.js';
-import { saveMessage, getMessages, saveOrUpdateByRunId } from './store.js';
+import { saveMessage, getMessages, saveOrUpdateByRunId, saveWidgetResponse } from './store.js';
 
 export function setupWebSocket(server) {
   const wss = new WebSocketServer({ server });
@@ -289,12 +289,47 @@ export function setupWebSocket(server) {
             if (trimmed === 'NO_REPLY' || trimmed === 'HEARTBEAT_OK') return;
             if (!text && !hasToolUse && state === 'delta') return;
 
+            // Check for widget commands in the text: [[WIDGET:{...}]]
+            // Always clean widget commands from display text (even in deltas)
+            // But only parse and render widgets on final state (to avoid partial JSON)
+            let cleanText = text.replace(/\[\[WIDGET:[\s\S]*?\]\]/g, '').trim();
+            const widgetMatches = text.match(/\[\[WIDGET:([\s\S]*?)\]\]/g);
+            const parsedWidgets = [];
+            if (widgetMatches && state === 'final') {
+              for (const match of widgetMatches) {
+                try {
+                  const jsonStr = match.replace(/^\[\[WIDGET:/, '').replace(/\]\]$/, '');
+                  const widgetData = JSON.parse(jsonStr);
+                  // Ensure required fields
+                  if (widgetData.widget && widgetData.id) {
+                    secureSend(JSON.stringify({
+                      type: 'widget',
+                      ...widgetData
+                    }));
+                    parsedWidgets.push(widgetData);
+                    // Save widget to history
+                    saveMessage({ role: 'bot', text: '', widget: widgetData });
+                  }
+                } catch (e) {
+                  console.error('Failed to parse widget:', e.message);
+                }
+              }
+            }
+
+            // Don't send empty chat messages after widget extraction
+            if (!cleanText && parsedWidgets.length > 0 && state === 'final') {
+              untrackRunId(payload.runId);
+              return;
+            }
+
             // Save bot responses to local history (both deltas and final)
             // This ensures messages survive server restarts mid-stream
+            // Use cleanText (widget-stripped) for final, trimmed for delta
+            const textToSave = (state === 'final' && cleanText !== undefined) ? cleanText : trimmed;
             if (state === 'delta' || state === 'final') {
-              if (trimmed || images.length > 0) {
+              if (textToSave || images.length > 0) {
                 saveOrUpdateByRunId(payload.runId, {
-                  text: trimmed,
+                  text: textToSave,
                   images: images.length > 0 ? images : undefined,
                   final: state === 'final',
                 });
@@ -308,7 +343,7 @@ export function setupWebSocket(server) {
               type: 'chat',
               state,
               runId: payload.runId,
-              text,
+              text: cleanText || text,
               error: errorMsg,
               images: images.length > 0 ? images : undefined,
             }));
@@ -594,6 +629,19 @@ export function setupWebSocket(server) {
         if (msg.type === 'voice_mode') {
           voiceMode = !!msg.enabled;
           console.log(`[${visitorId}] Voice mode: ${voiceMode}`);
+          return;
+        }
+
+        // Handle widget responses from client
+        if (msg.type === 'widget_response') {
+          const { id, widget, value, action } = msg;
+          // Save response to widget in history
+          saveWidgetResponse(id, { value, action });
+          // Format as JSON that the agent can parse
+          const widgetResponse = `[WIDGET_RESPONSE:${JSON.stringify({ id, widget, value, action })}]`;
+          if (connected && gwWs?.readyState === WebSocket.OPEN) {
+            sendToGateway(widgetResponse);
+          }
           return;
         }
 
