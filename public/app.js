@@ -1,6 +1,6 @@
 // ─── Version check: force reload if cached JS doesn't match HTML version ───
 (function() {
-  var JS_VERSION = '20260211i';
+  var JS_VERSION = '20260211s';
   console.log('[ClawTime] JS loaded, version:', JS_VERSION);
   if (window.CLAWTIME_VERSION && window.CLAWTIME_VERSION !== JS_VERSION) {
     console.log('[ClawTime] Version mismatch, forcing reload');
@@ -207,6 +207,29 @@ async function init() {
   console.log('[Auth] init() starting');
   await loadConfig();
   console.log('[Auth] loadConfig done');
+
+  // Token-based auth for automated testing
+  var urlParams = new URLSearchParams(window.location.search);
+  var testToken = urlParams.get('token');
+  if (testToken) {
+    try {
+      var tokenRes = await fetch('/auth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: testToken })
+      });
+      var tokenData = await tokenRes.json();
+      if (tokenData.valid) {
+        console.log('[Auth] Token auth successful');
+        sessionToken = tokenData.sessionToken;
+        localStorage.setItem('clawtime_session', sessionToken);
+        enterChat();
+        return;
+      }
+    } catch (e) {
+      console.log('[Auth] Token auth failed:', e.message);
+    }
+  }
 
   sessionToken = localStorage.getItem('clawtime_session');
   console.log('[Auth] checking /auth/status');
@@ -830,7 +853,15 @@ function sendWidgetResponse(id, widgetType, value, action) {
 function renderWidget(widgetData) {
   var id = widgetData.id;
   var type = widgetData.widget;
-  var data = widgetData.data || {};
+  // Merge top-level properties into data (allows both formats)
+  // Copy all properties except meta fields
+  var data = Object.assign({}, widgetData.data || {});
+  var skipKeys = ['id', 'widget', 'type', 'data', 'inline'];
+  Object.keys(widgetData).forEach(function(key) {
+    if (skipKeys.indexOf(key) === -1 && widgetData[key] !== undefined) {
+      data[key] = widgetData[key];
+    }
+  });
   var inline = widgetData.inline || false;
   
   // Check if updating existing widget
@@ -868,9 +899,6 @@ function renderWidget(widgetData) {
     case 'carousel':
       renderCarouselWidget(container, id, data);
       break;
-    case 'map':
-      renderMapWidget(container, id, data);
-      break;
     default:
       container.textContent = '[Unknown widget: ' + type + ']';
   }
@@ -887,10 +915,11 @@ function renderWidget(widgetData) {
 }
 
 function renderButtonsWidget(container, id, data) {
-  if (data.prompt) {
+  var promptText = data.prompt || data.label;
+  if (promptText) {
     var prompt = document.createElement('div');
     prompt.className = 'widget-prompt';
-    prompt.textContent = data.prompt;
+    prompt.textContent = promptText;
     container.appendChild(prompt);
   }
   
@@ -955,10 +984,11 @@ function renderConfirmWidget(container, id, data) {
     container.appendChild(title);
   }
   
-  if (data.message) {
+  var messageText = data.message || data.label;
+  if (messageText) {
     var msg = document.createElement('div');
     msg.className = 'widget-message';
-    msg.textContent = data.message;
+    msg.textContent = messageText;
     container.appendChild(msg);
   }
   
@@ -1233,92 +1263,6 @@ function renderCarouselWidget(container, id, data) {
   container.appendChild(carousel);
 }
 
-function renderMapWidget(container, id, data) {
-  if (data.label) {
-    var label = document.createElement('div');
-    label.className = 'widget-prompt';
-    label.textContent = data.label;
-    container.appendChild(label);
-  }
-  
-  var mapDiv = document.createElement('div');
-  mapDiv.className = 'widget-map';
-  mapDiv.id = 'map-' + id;
-  container.appendChild(mapDiv);
-  
-  // Load Leaflet if not loaded
-  function initMap() {
-    var lat = data.lat || data.center?.[0] || 37.7749;
-    var lng = data.lng || data.center?.[1] || -122.4194;
-    var zoom = data.zoom || 13;
-    
-    var map = L.map(mapDiv.id).setView([lat, lng], zoom);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap'
-    }).addTo(map);
-    
-    var marker = null;
-    var selectedLocation = null;
-    
-    if (data.marker || data.value) {
-      var mLat = data.marker?.lat || data.value?.lat || lat;
-      var mLng = data.marker?.lng || data.value?.lng || lng;
-      marker = L.marker([mLat, mLng]).addTo(map);
-      selectedLocation = { lat: mLat, lng: mLng };
-    }
-    
-    if (data.selectable !== false) {
-      map.on('click', function(e) {
-        if (container.classList.contains('disabled')) return;
-        selectedLocation = { lat: e.latlng.lat, lng: e.latlng.lng };
-        if (marker) {
-          marker.setLatLng(e.latlng);
-        } else {
-          marker = L.marker(e.latlng).addTo(map);
-        }
-      });
-    }
-    
-    // Add confirm button
-    var btnGroup = document.createElement('div');
-    btnGroup.className = 'widget-btn-group widget-map-buttons';
-    
-    var submitBtn = document.createElement('button');
-    submitBtn.className = 'widget-btn primary';
-    submitBtn.textContent = data.submitLabel || 'Select Location';
-    submitBtn.addEventListener('click', function() {
-      if (container.classList.contains('disabled')) return;
-      if (!selectedLocation) {
-        alert('Please click on the map to select a location');
-        return;
-      }
-      container.classList.add('disabled');
-      sendWidgetResponse(id, 'map', selectedLocation, 'submit');
-    });
-    btnGroup.appendChild(submitBtn);
-    container.appendChild(btnGroup);
-    
-    // Fix map size after render
-    setTimeout(function() { map.invalidateSize(); }, 100);
-  }
-  
-  if (typeof L !== 'undefined') {
-    initMap();
-  } else {
-    // Load Leaflet CSS
-    var css = document.createElement('link');
-    css.rel = 'stylesheet';
-    css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-    document.head.appendChild(css);
-    
-    // Load Leaflet JS
-    var script = document.createElement('script');
-    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.onload = initMap;
-    document.head.appendChild(script);
-  }
-}
-
 function applyWidgetResponse(container, widgetType, data, response) {
   container.classList.add('disabled');
   
@@ -1374,9 +1318,6 @@ function applyWidgetResponse(container, widgetType, data, response) {
           slides[response.value.index].style.outline = '3px solid var(--accent)';
         }
       }
-      break;
-    case 'map':
-      // Map will show marker at selected location when re-rendered
       break;
     // code and progress don't need special response handling
   }
@@ -2097,8 +2038,8 @@ function connectWs() {
         for (var i = historyIndex; i < historyMessages.length; i++) {
           var m = historyMessages[i];
           if (m.widget) {
-            // Render widget from history
-            var widgetEl = renderWidget({ id: m.widget.id, widget: m.widget.widget, data: m.widget.data });
+            // Render widget from history (pass full widget object, renderWidget handles both formats)
+            var widgetEl = renderWidget(m.widget);
             // If already responded, show response state and disable
             if (m.widget.response && widgetEl) {
               applyWidgetResponse(widgetEl, m.widget.widget, m.widget.data, m.widget.response);
@@ -2134,6 +2075,7 @@ function connectWs() {
 
       // Handle widget messages
       if (msg.type === 'widget') {
+        console.log('[Widget] Received widget:', msg);
         renderWidget(msg);
         return;
       }

@@ -371,6 +371,20 @@ export async function handleRequest(req, res) {
       return json(200, { valid: false });
     }
 
+    // ── Token auth for automated testing ──
+    if (urlPath === '/auth/token' && req.method === 'POST') {
+      const { token } = await parseBody(req);
+      const testToken = process.env.TEST_TOKEN;
+      if (testToken && token === testToken) {
+        const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+        const sessionToken = crypto.randomBytes(32).toString('hex');
+        sessions.set(sessionToken, { ip: clientIp, createdAt: Date.now() });
+        auditLog('token_auth', { ip: clientIp });
+        return json(200, { valid: true, sessionToken });
+      }
+      return json(200, { valid: false });
+    }
+
     // ── List passkeys ──
     if (urlPath === '/auth/passkeys' && req.method === 'GET') {
       const authHeader = req.headers['authorization'] || '';

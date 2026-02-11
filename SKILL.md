@@ -431,6 +431,83 @@ Tasks use markdown format with sections:
 | ✅ | Completed task |
 | `- [x]` | Also marks as done |
 
+## Widgets
+
+ClawTime supports interactive widgets for richer user interactions. Include widget markup in your response and it will render as an interactive UI element.
+
+### Widget Syntax
+
+```
+[[WIDGET:{"widget":"TYPE","id":"UNIQUE_ID",...properties}]]
+```
+
+The widget markup is stripped from the displayed message and rendered as a UI component.
+
+### Available Widgets
+
+#### Buttons
+```
+[[WIDGET:{"widget":"buttons","id":"choice1","label":"Pick a color:","options":["Red","Green","Blue"]}]]
+```
+- `label` — Prompt text above buttons
+- `options` — Array of button labels (strings)
+
+#### Confirm
+```
+[[WIDGET:{"widget":"confirm","id":"delete1","title":"Delete file?","message":"This cannot be undone."}]]
+```
+- `title` — Bold header text
+- `message` — Description text
+- Renders Cancel and Confirm buttons
+
+#### Progress
+```
+[[WIDGET:{"widget":"progress","id":"upload1","label":"Uploading...","value":65}]]
+```
+- `label` — Description text
+- `value` — Progress percentage (0-100)
+
+#### Code
+```
+[[WIDGET:{"widget":"code","id":"snippet1","filename":"example.py","code":"print('Hello')","language":"python"}]]
+```
+- `filename` — File name shown in header
+- `code` — The code content
+- `language` — Syntax highlighting hint
+- Includes a Copy button
+
+#### Form
+```
+[[WIDGET:{"widget":"form","id":"survey1","label":"Quick Survey","fields":[{"name":"email","label":"Email","type":"text"},{"name":"rating","label":"Rating","type":"text"}]}]]
+```
+- `label` — Form title
+- `fields` — Array of field objects with `name`, `label`, `type`
+
+#### Datepicker
+```
+[[WIDGET:{"widget":"datepicker","id":"date1","label":"Select date:"}]]
+```
+- `label` — Prompt text
+
+### Widget Responses
+
+When a user interacts with a widget, you receive a response in this format:
+```
+[WIDGET_RESPONSE:{"id":"choice1","widget":"buttons","value":"Red","action":"submit"}]
+```
+
+- `id` — The widget ID you specified
+- `widget` — Widget type
+- `value` — User's selection/input
+- `action` — Usually "submit" or "cancel"
+
+### Best Practices
+
+1. **Always use unique IDs** — Each widget needs a distinct `id`
+2. **Keep options concise** — Button labels should be short
+3. **Use widgets for structured input** — Better than asking "type 1, 2, or 3"
+4. **Acknowledge responses** — Tell the user what they selected
+
 ## Key Files
 
 | Path | Purpose |

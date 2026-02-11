@@ -295,15 +295,23 @@ export function setupWebSocket(server) {
             let cleanText = text.replace(/\[\[WIDGET:[\s\S]*?\]\]/g, '').trim();
             const widgetMatches = text.match(/\[\[WIDGET:([\s\S]*?)\]\]/g);
             const parsedWidgets = [];
-            if (widgetMatches && state === 'final') {
+            // Extract widgets on delta too (once we have complete JSON)
+            if (widgetMatches) {
+              // Track sent widgets to avoid duplicates during streaming
+              if (!clientWs.sentWidgetIds) clientWs.sentWidgetIds = new Set();
               for (const match of widgetMatches) {
                 try {
                   const jsonStr = match.replace(/^\[\[WIDGET:/, '').replace(/\]\]$/, '');
                   const widgetData = JSON.parse(jsonStr);
-                  // Ensure required fields
-                  if (widgetData.widget && widgetData.id) {
+                  // Normalize: accept both "widget" and "type" for widget type
+                  const widgetType = widgetData.widget || widgetData.type;
+                  // Ensure required fields and not already sent
+                  if (widgetType && widgetData.id && !clientWs.sentWidgetIds.has(widgetData.id)) {
+                    clientWs.sentWidgetIds.add(widgetData.id);
+                    console.log('[Widget] Sending widget:', widgetData.id, widgetType);
                     secureSend(JSON.stringify({
                       type: 'widget',
+                      widget: widgetType,
                       ...widgetData
                     }));
                     parsedWidgets.push(widgetData);
@@ -324,8 +332,8 @@ export function setupWebSocket(server) {
 
             // Save bot responses to local history (both deltas and final)
             // This ensures messages survive server restarts mid-stream
-            // Use cleanText (widget-stripped) for final, trimmed for delta
-            const textToSave = (state === 'final' && cleanText !== undefined) ? cleanText : trimmed;
+            // Always use cleanText (widget-stripped) to avoid saving raw [[WIDGET:...]] markup
+            const textToSave = cleanText;
             if (state === 'delta' || state === 'final') {
               if (textToSave || images.length > 0) {
                 saveOrUpdateByRunId(payload.runId, {
