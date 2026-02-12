@@ -102,10 +102,7 @@ The agent will handle the complete setup — install, configure, and deploy.
 
 ## License
 
-**Polyform Noncommercial 1.0.0** — see [LICENSE](LICENSE)
-
-- ✅ Free for personal use, hobby projects, research, education
-- 💼 Commercial use requires a paid license — tongkeyun@gmail.com
+MIT — see [LICENSE](LICENSE)
 
 ## Author
 

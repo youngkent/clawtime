@@ -703,7 +703,16 @@ export function setupWebSocket(server) {
       console.log(`[${visitorId}] Client disconnected`);
       clearInterval(pingInterval);
       auditLog('ws_close', { visitorId });
-      if (gwWs) gwWs.close();
+      // Keep gateway connection open briefly to receive any pending responses
+      // This prevents message loss when client disconnects mid-response
+      if (gwWs) {
+        setTimeout(() => {
+          if (gwWs && gwWs.readyState === WebSocket.OPEN) {
+            console.log(`[${visitorId}] Closing gateway connection after grace period`);
+            gwWs.close();
+          }
+        }, 10000); // 10 second grace period
+      }
     });
   });
 

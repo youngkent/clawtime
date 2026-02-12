@@ -16,7 +16,7 @@
     "webauthn",
     "passkey"
   ],
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "author": "Keyun Tong <tongkeyun@gmail.com>",
   "repository": {
     "type": "git",
