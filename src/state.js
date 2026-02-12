@@ -61,7 +61,24 @@ let SETUP_TOKEN = process.env.SETUP_TOKEN || '';
 let activeClientWs = null;        // Track the active webchat client for injection
 
 export function getSetupToken() { return SETUP_TOKEN; }
-export function consumeSetupToken() { SETUP_TOKEN = ''; }
+export function consumeSetupToken() {
+  SETUP_TOKEN = '';
+  // Also remove from .env so it stays consumed after restart
+  const envPath = path.join(DATA_DIR, '.env');
+  try {
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf8');
+      const updated = content
+        .split('\n')
+        .filter(line => !line.match(/^\s*SETUP_TOKEN\s*=/))
+        .join('\n');
+      fs.writeFileSync(envPath, updated);
+      console.log('[ClawTime] Setup token consumed and removed from .env');
+    }
+  } catch (err) {
+    console.error('[ClawTime] Failed to remove setup token from .env:', err.message);
+  }
+}
 
 export function getActiveClientWs() { return activeClientWs; }
 export function setActiveClientWs(ws) { activeClientWs = ws; }
