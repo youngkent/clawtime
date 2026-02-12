@@ -534,12 +534,25 @@ function renderMarkdown(text) {
 function setBubbleContent(bubble, text) {
   var timeEl = bubble.querySelector('.msg-time');
   var quoteEl = bubble.querySelector('.reply-quote');
+  
+  // Extract widgets from text
+  var extracted = extractWidgets(text);
+  text = extracted.text;
+  var widgets = extracted.widgets;
+  
   bubble.innerHTML = '';
   bubble.dataset.rawText = text;
   if (quoteEl) bubble.appendChild(quoteEl);
   var contentDiv = document.createElement('div');
   contentDiv.innerHTML = renderMarkdown(text);
   bubble.appendChild(contentDiv);
+  
+  // Render extracted widgets
+  for (var i = 0; i < widgets.length; i++) {
+    var widgetEl = renderWidget(widgets[i]);
+    if (widgetEl) bubble.appendChild(widgetEl);
+  }
+  
   if (timeEl) bubble.appendChild(timeEl);
 }
 
@@ -638,10 +651,33 @@ function formatTime(ts) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+// Extract [[WIDGET:{...}]] from text, return { text, widgets }
+function extractWidgets(text) {
+  if (!text) return { text: text, widgets: [] };
+  var widgets = [];
+  var cleaned = text.replace(/\[\[WIDGET:([\s\S]*?)\]\]/g, function(match, json) {
+    try {
+      widgets.push(JSON.parse(json));
+    } catch (e) {
+      console.error('[Widget] Failed to parse:', json, e);
+    }
+    return '';
+  });
+  return { text: cleaned.trim(), widgets: widgets };
+}
+
 function addMessage(text, sender, opts) {
   opts = opts || {};
   var welcome = messagesEl.querySelector('.welcome');
   if (welcome) welcome.remove();
+
+  // Extract widgets from text (bot messages only)
+  var extractedWidgets = [];
+  if (sender === 'bot') {
+    var extracted = extractWidgets(text);
+    text = extracted.text;
+    extractedWidgets = extracted.widgets;
+  }
 
   var div = document.createElement('div');
   div.className = 'message ' + sender;
@@ -681,6 +717,12 @@ function addMessage(text, sender, opts) {
     bubble.appendChild(contentDiv);
   } else {
     bubble.appendChild(document.createTextNode(text));
+  }
+
+  // Render extracted widgets inside the bubble
+  for (var i = 0; i < extractedWidgets.length; i++) {
+    var widgetEl = renderWidget(extractedWidgets[i]);
+    if (widgetEl) bubble.appendChild(widgetEl);
   }
 
   var timeStr = formatTime(opts.timestamp || Date.now());
