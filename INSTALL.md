@@ -14,6 +14,12 @@ npm install
 
 The setup script prompts for bot name/emoji, configures gateway token, and starts ClawTime.
 
+### Local secrets policy
+
+- Keep secrets in local env files only: `~/.clawtime/.env` or `./.env`
+- Never commit credentials to git
+- `.env*` is gitignored (except `.env.example`)
+
 ## Remote Access
 
 ClawTime requires a stable HTTPS URL for WebAuthn passkeys.

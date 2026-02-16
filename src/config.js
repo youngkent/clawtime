@@ -12,6 +12,20 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.join(__dirname, '..');
 const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
+
+// Load local env files without requiring --env-file.
+// Priority: runtime env vars > project .env > data-dir .env
+if (typeof process.loadEnvFile === 'function') {
+  try {
+    process.loadEnvFile(path.join(ROOT_DIR, '.env'));
+  } catch {}
+
+  const inferredDataDir = process.env.CLAWTIME_DATA_DIR || path.join(os.homedir(), '.clawtime');
+  try {
+    process.loadEnvFile(path.join(inferredDataDir, '.env'));
+  } catch {}
+}
+
 const DATA_DIR = process.env.CLAWTIME_DATA_DIR || path.join(os.homedir(), '.clawtime');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);

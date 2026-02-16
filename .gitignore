@@ -3,7 +3,10 @@ node_modules/
 
 # Secrets & credentials
 .env
+.env.*
+!.env.example
 credentials.json
+credentials.*.json
 
 # Runtime data
 messages.json
