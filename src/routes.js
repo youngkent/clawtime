@@ -58,9 +58,9 @@ function getSelectedAvatar(previewMode = false) {
     const config = JSON.parse(data);
     // Preview avatar takes precedence if set
     if (config.previewAvatar) return config.previewAvatar;
-    return config.selectedAvatar || 'lobster';
+    return config.selectedAvatar;
   } catch (e) {
-    return 'lobster';
+    return null;
   }
 }
 
@@ -95,6 +95,7 @@ function serveStatic(req, res) {
   };
   
   // Special handling for avatar.js - use query param or saved preference
+  // Avatars are loaded only from ~/.clawtime/avatars/ (agent copies defaults during setup)
   if (fileName === '/avatar.js') {
     const queryAvatar = getAvatarFromQuery(req.url);
     const selectedAvatar = queryAvatar || getSelectedAvatar();
@@ -104,21 +105,13 @@ function serveStatic(req, res) {
       res.writeHead(400); res.end('Invalid avatar'); return;
     }
     
-    let avatarPath;
+    const avatarPath = path.join(DATA_DIR, 'avatars', selectedAvatar + '.js');
     
-    // Priority: custom (~/.clawtime/avatars/) > OSS (public/avatars/)
-    const customAvatarPath = path.join(DATA_DIR, 'avatars', selectedAvatar + '.js');
-    const ossAvatarPath = path.join(PUBLIC_DIR, 'avatars', selectedAvatar + '.js');
-    
-    if (fs.existsSync(customAvatarPath)) {
-      avatarPath = customAvatarPath;
-    } else if (fs.existsSync(ossAvatarPath)) {
-      avatarPath = ossAvatarPath;
+    if (fs.existsSync(avatarPath)) {
+      sendFile(avatarPath);
     } else {
-      // Fallback to lobster if not found
-      avatarPath = path.join(PUBLIC_DIR, 'avatars', 'lobster.js');
+      res.writeHead(404); res.end('Avatar not found: ' + selectedAvatar);
     }
-    sendFile(avatarPath);
     return;
   }
   
@@ -189,8 +182,8 @@ export async function handleRequest(req, res) {
     // ── Avatar preview (temporary) ──
     if (urlPath.startsWith('/api/avatar/preview') && req.method === 'GET') {
       const url = new URL(req.url, 'http://localhost');
-      const avatar = url.searchParams.get('avatar') || 'lobster';
-      if (!isSafeFilename(avatar)) {
+      const avatar = url.searchParams.get('avatar');
+      if (!avatar || !isSafeFilename(avatar)) {
         return json(400, { error: 'Invalid avatar name' });
       }
       // Set preview avatar temporarily
@@ -211,19 +204,7 @@ export async function handleRequest(req, res) {
       if (!isSafeFilename(avatar)) {
         return json(400, { error: 'Invalid avatar name' });
       }
-      if (avatar === 'lobster') {
-        return json(400, { error: 'Cannot delete built-in avatar' });
-      }
-      // Delete custom avatar file from avatars directory
-      const customPath = path.join(DATA_DIR, 'avatars', avatar + '.js');
-      try {
-        if (fs.existsSync(customPath)) {
-          fs.unlinkSync(customPath);
-        }
-      } catch (e) {
-        // Ignore delete errors
-      }
-      // Reset selection to lobster if deleted avatar was selected
+      // Check if this is the currently selected avatar
       const configPath = path.join(DATA_DIR, 'config.json');
       let config = {};
       try {
@@ -231,8 +212,16 @@ export async function handleRequest(req, res) {
         config = JSON.parse(data);
       } catch (e) { /* no config */ }
       if (config.selectedAvatar === avatar) {
-        config.selectedAvatar = 'lobster';
-        fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+        return json(400, { error: 'Cannot delete the currently selected avatar' });
+      }
+      // Delete avatar file from avatars directory
+      const avatarPath = path.join(DATA_DIR, 'avatars', avatar + '.js');
+      try {
+        if (fs.existsSync(avatarPath)) {
+          fs.unlinkSync(avatarPath);
+        }
+      } catch (e) {
+        // Ignore delete errors
       }
       auditLog('avatar_deleted', { avatar });
       return json(200, { success: true });
@@ -302,24 +291,26 @@ export async function handleRequest(req, res) {
       };
 
       const selected = getSelectedAvatar();
-      const defaultTheme = { id: 'lobster', emoji: '🦞', color: 'f97316' };
 
-      // Find avatar file: custom > OSS
-      const ossPath = path.join(PUBLIC_DIR, 'avatars', selected + '.js');
-      const customPath = path.join(DATA_DIR, 'avatars', selected + '.js');
-      
-      let avatarPath = null;
-      if (fs.existsSync(customPath)) avatarPath = customPath;
-      else if (fs.existsSync(ossPath)) avatarPath = ossPath;
+      // Find avatar file in ~/.clawtime/avatars/
+      const avatarPath = selected ? path.join(DATA_DIR, 'avatars', selected + '.js') : null;
 
-      if (avatarPath) {
+      if (avatarPath && fs.existsSync(avatarPath)) {
         const meta = parseAvatarMeta(avatarPath);
         if (meta) {
           return json(200, { id: selected, emoji: meta.emoji || '🎭', color: meta.color || 'f97316' });
         }
       }
 
-      return json(200, defaultTheme);
+      // Fallback: return first available avatar or generic theme
+      const avatarsDir = path.join(DATA_DIR, 'avatars');
+      const available = fs.existsSync(avatarsDir) ? fs.readdirSync(avatarsDir).filter(f => f.endsWith('.js')) : [];
+      if (available.length > 0) {
+        const firstAvatar = available[0].replace('.js', '');
+        const firstMeta = parseAvatarMeta(path.join(avatarsDir, available[0]));
+        return json(200, { id: firstAvatar, emoji: firstMeta?.emoji || '🎭', color: firstMeta?.color || 'f97316' });
+      }
+      return json(200, { id: null, emoji: '🎭', color: 'f97316' });
     }
 
     // ── Generate invite token (localhost only) ──

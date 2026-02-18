@@ -98,7 +98,7 @@ const botMessagesByRunId = new Map();
 let reconnectTimer = null;
 let sessionToken = null;
 let isRegistered = false;
-let pendingImageBase64 = null;
+let pendingAttachments = [];  // Array of { base64, name, type, dataUrl? }
 
 // ─── History Pagination ───
 const HISTORY_PAGE_SIZE = 10;
@@ -221,7 +221,7 @@ function loadOlderMessages() {
 
 // ─── Send Button State ───
 function updateSendBtn() {
-  var hasContent = !!(inputEl.value.trim() || pendingImageBase64);
+  var hasContent = !!(inputEl.value.trim() || pendingAttachments.length > 0);
   sendBtn.disabled = !hasContent || !connected;
 }
 
@@ -492,8 +492,12 @@ function renderMarkdown(text) {
   if (!text) return '';
   var s = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+  // Extract code blocks first to protect them from other transformations
+  var codeBlocks = [];
   s = s.replace(/```(\w*)\n([\s\S]*?)```/g, function(m, lang, code) {
-    return '<pre><code class="lang-' + lang + '">' + code.trim() + '</code></pre>';
+    var placeholder = '%%CODEBLOCK' + codeBlocks.length + '%%';
+    codeBlocks.push('<pre><code class="lang-' + lang + '">' + code.trim() + '</code></pre>');
+    return placeholder;
   });
 
   s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
@@ -504,6 +508,7 @@ function renderMarkdown(text) {
   s = s.replace(/^### (.+)$/gm, '<h4>$1</h4>');
   s = s.replace(/^## (.+)$/gm, '<h3>$1</h3>');
   s = s.replace(/^# (.+)$/gm, '<h2>$1</h2>');
+
   // Inline images: ![alt](url) → <img> with E2E fetch for self-hosted
   s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, function(m, alt, url) {
     // For self-hosted images (relative URLs or same origin), fetch through encrypted WS
@@ -546,6 +551,11 @@ function renderMarkdown(text) {
   s = s.replace(/\n\n/g, '</p><p>');
   s = s.replace(/\n/g, '<br>');
 
+  // Restore code blocks AFTER newline conversion (so <br> doesn't appear inside <pre>)
+  codeBlocks.forEach(function(block, i) {
+    s = s.replace('%%CODEBLOCK' + i + '%%', block);
+  });
+
   if (!/^<(h[2-4]|pre|ul|ol|blockquote|hr|p)/.test(s)) {
     s = '<p>' + s + '</p>';
   }
@@ -567,7 +577,12 @@ function setBubbleContent(bubble, text) {
   bubble.dataset.rawText = text;
   if (quoteEl) bubble.appendChild(quoteEl);
   var contentDiv = document.createElement('div');
-  contentDiv.innerHTML = renderMarkdown(text);
+  try {
+    contentDiv.innerHTML = renderMarkdown(text);
+  } catch (e) {
+    console.error('[Markdown] Render error:', e);
+    contentDiv.textContent = text; // Fallback to plain text
+  }
   bubble.appendChild(contentDiv);
   
   // Render extracted widgets
@@ -777,33 +792,36 @@ function addMessage(text, sender, opts) {
 }
 
 function processChatEvent(msg) {
-  var state = msg.state, runId = msg.runId, text = msg.text, error = msg.error, images = msg.images || [];
+  var state = msg.state, runId = msg.runId, text = msg.text || '', error = msg.error, images = msg.images || [];
 
   if (state === 'delta') {
     hideTyping();
     activeRunning = true;
     var existing = botMessagesByRunId.get(runId);
+    
     if (existing) {
       if (existing.finalized) {
+        // RunId was finalized but got reused — start fresh bubble
         clearTimeout(existing.cleanupTimer);
         var bubble = addMessage(text, 'bot', { timestamp: Date.now() });
-        botMessagesByRunId.set(runId, { bubble: bubble, runId: runId, finalized: false });
+        botMessagesByRunId.set(runId, { bubble: bubble, runId: runId, finalized: false, maxTextLen: text.length });
       } else {
-        var currentText = existing.bubble.innerText || existing.bubble.textContent || '';
-        if (text.length < currentText.length * 0.5 && currentText.length > 20) {
-          existing.finalized = true;
-          var bubble = addMessage(text, 'bot', { timestamp: Date.now() });
-          botMessagesByRunId.set(runId, { bubble: bubble, runId: runId, finalized: false, prevBubbles: [].concat(existing.prevBubbles || [], [existing.bubble]) });
-        } else {
+        // CRITICAL: Never let shorter text overwrite longer text (cumulative deltas)
+        // Only update if new text is longer OR similar length (allow small fluctuations)
+        if (text.length >= existing.maxTextLen - 10) {
           var existingTimeEl = existing.bubble.querySelector('.msg-time');
           setBubbleContent(existing.bubble, text);
           if (existingTimeEl) existing.bubble.appendChild(existingTimeEl);
+          existing.maxTextLen = Math.max(existing.maxTextLen || 0, text.length);
         }
+        // else: shorter text with same runId — ignore silently (cumulative delta protection)
       }
     } else {
+      // New runId — create bubble
       var bubble = addMessage(text, 'bot', { timestamp: Date.now() });
-      botMessagesByRunId.set(runId, { bubble: bubble, runId: runId, finalized: false });
+      botMessagesByRunId.set(runId, { bubble: bubble, runId: runId, finalized: false, maxTextLen: text.length });
     }
+    
     if ((messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight) < 150) {
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
@@ -811,7 +829,6 @@ function processChatEvent(msg) {
     clearTimeout(deltaGapTimer);
     deltaGapTimer = setTimeout(function() {
       if (activeRunning && window.setAvatarState) {
-        // If response has code, show coding state
         var deltaText = (text || '');
         if (/```/.test(deltaText)) { setAvatarState('coding'); }
         else { setAvatarState('working'); }
@@ -823,13 +840,12 @@ function processChatEvent(msg) {
     if (text) {
       var existing = botMessagesByRunId.get(runId);
       if (existing && !existing.finalized) {
-        var currentText = existing.bubble.innerText || existing.bubble.textContent || '';
-        if (text.length >= currentText.length * 0.5 || currentText.length < 20) {
-          setBubbleContent(existing.bubble, text);
-        }
+        // Final always updates (it's authoritative)
+        setBubbleContent(existing.bubble, text);
+        existing.maxTextLen = text.length;
       } else if (!existing) {
         var bubble = addMessage(text, 'bot', { timestamp: Date.now() });
-        botMessagesByRunId.set(runId, { bubble: bubble, runId: runId, finalized: false });
+        botMessagesByRunId.set(runId, { bubble: bubble, runId: runId, finalized: false, maxTextLen: text.length });
       }
     }
     // Render inline images from bot response
@@ -991,7 +1007,7 @@ function renderButtonsWidget(container, id, data) {
   var btnGroup = document.createElement('div');
   btnGroup.className = 'widget-btn-group' + (data.layout === 'vertical' ? ' vertical' : '');
   
-  var options = data.options || [];
+  var options = data.options || data.buttons || [];
   options.forEach(function(opt) {
     var btn = document.createElement('button');
     btn.className = 'widget-btn';
@@ -1919,6 +1935,13 @@ function connectWs() {
         console.log('[WS] connected received, going online');
         setStatus('online');
         secureSend(JSON.stringify({ type: 'get_history' }));
+        // Restore exact avatar state from server
+        if (msg.avatarState && window.setAvatarState) {
+          // Use original function to avoid re-sending to server
+          var origFn = window.setAvatarState._original || window.setAvatarState;
+          origFn(msg.avatarState);
+          if (msg.avatarState !== 'idle') activeRunning = true;
+        }
         // Voice mode remembered — user taps avatar to restart
         return;
       }
@@ -2046,15 +2069,31 @@ function connectWs() {
       // just like freshly-sent images.
       if (msg.type === 'history') {
         var rawMessages = msg.messages || [];
-        historyMessages = [];
         
-        // Clear existing messages on history load (handles reconnect case)
-        // This ensures no duplicates and catches any messages sent during disconnect
-        var existingMessages = messagesEl.querySelectorAll('.message, .welcome');
-        for (var em = 0; em < existingMessages.length; em++) {
-          existingMessages[em].remove();
+        // Check if we already have messages displayed (reconnect scenario)
+        var existingMsgCount = messagesEl.querySelectorAll('.message').length;
+        var isReconnect = existingMsgCount > 0;
+        
+        if (isReconnect) {
+          // Reconnect — don't re-render, just update historyMessages for "load more"
+          // This preserves any in-flight streaming messages
+          historyMessages = [];
+          for (var hi = 0; hi < rawMessages.length; hi++) {
+            var hm = rawMessages[hi];
+            var text = hm.text || (typeof hm.content === 'string' ? hm.content : '');
+            if (text.trim()) {
+              historyMessages.push({ role: hm.role === 'user' ? 'user' : 'bot', text: text, timestamp: hm.timestamp });
+            }
+          }
+          historyIndex = Math.max(0, historyMessages.length - HISTORY_PAGE_SIZE);
+          historyLoaded = true;
+          return;
         }
-        // Clear tracking state
+        
+        // First load — clear welcome and render history
+        historyMessages = [];
+        var welcome = messagesEl.querySelector('.welcome');
+        if (welcome) welcome.remove();
         botMessagesByRunId.clear();
         hideTyping();
         
@@ -2106,6 +2145,15 @@ function connectWs() {
         for (var i = historyIndex; i < historyMessages.length; i++) {
           var m = historyMessages[i];
           if (m.widget) {
+            // Check if widget already rendered (dedup live vs history)
+            var existingWidget = document.querySelector('[data-widget-id="' + m.widget.id + '"]');
+            if (existingWidget) {
+              // Widget exists - but apply response if it has one and widget isn't disabled
+              if (m.widget.response && !existingWidget.classList.contains('disabled')) {
+                applyWidgetResponse(existingWidget, m.widget.widget, m.widget.data, m.widget.response);
+              }
+              continue;
+            }
             // Render widget from history (pass full widget object, renderWidget handles both formats)
             var widgetEl = renderWidget(m.widget);
             // If already responded, show response state and disable
@@ -2156,7 +2204,7 @@ function connectWs() {
         processChatEvent(msg);
       }
     } catch (err) {
-      // parse error
+      console.error('[WS] Message processing error:', err);
     }
   };
 
@@ -2327,8 +2375,8 @@ setInterval(function() {
 }, 60000); // Check every minute
 
 function send() {
-  if (pendingImageBase64) {
-    sendWithImage();
+  if (pendingAttachments.length > 0) {
+    sendWithAttachments();
     return;
   }
   var text = inputEl.value.trim();
@@ -2430,46 +2478,82 @@ var camUseBtn = document.getElementById('camUseBtn');
 var cameraStream = null;
 var capturedImageBase64 = null;
 
-function processImage(file) {
+function processFile(file) {
   return new Promise(function(resolve, reject) {
     var reader = new FileReader();
     reader.onload = function(e) {
-      var img = new Image();
-      img.onload = function() {
-        var MAX = 1920;
-        var w = img.width, h = img.height;
-        if (w > MAX || h > MAX) {
-          if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
-          else { w = Math.round(w * MAX / h); h = MAX; }
-        }
-        var canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        var dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-        var base64 = dataUrl.split(',')[1];
-        resolve({ base64: base64, dataUrl: dataUrl, name: file.name || 'photo.jpg', width: w, height: h });
-      };
-      img.onerror = reject;
-      img.src = e.target.result;
+      var dataUrl = e.target.result;
+      var base64 = dataUrl.split(',')[1];
+      var type = file.type || 'application/octet-stream';
+      
+      // For images, optionally resize large ones
+      if (type.startsWith('image/')) {
+        var img = new Image();
+        img.onload = function() {
+          var MAX = 1920;
+          var w = img.width, h = img.height;
+          if (w > MAX || h > MAX) {
+            if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+            else { w = Math.round(w * MAX / h); h = MAX; }
+            var canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+            dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+            base64 = dataUrl.split(',')[1];
+            type = 'image/jpeg';
+          }
+          resolve({ base64: base64, dataUrl: dataUrl, name: file.name || 'file', type: type });
+        };
+        img.onerror = function() {
+          resolve({ base64: base64, dataUrl: dataUrl, name: file.name || 'file', type: type });
+        };
+        img.src = dataUrl;
+      } else {
+        resolve({ base64: base64, dataUrl: dataUrl, name: file.name || 'file', type: type });
+      }
     };
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
 }
 
-function showImagePreview(base64, dataUrl, name) {
-  pendingImageBase64 = base64;
-  previewImg.src = dataUrl;
-  previewInfo.textContent = name;
-  imagePreview.classList.add('active');
+function addAttachment(attachment) {
+  pendingAttachments.push(attachment);
+  renderAttachmentPreview();
   updateSendBtn();
 }
 
-function clearImagePreview() {
-  pendingImageBase64 = null;
-  previewImg.src = '';
-  imagePreview.classList.remove('active');
+function removeAttachment(index) {
+  pendingAttachments.splice(index, 1);
+  renderAttachmentPreview();
+  updateSendBtn();
+}
+
+function renderAttachmentPreview() {
+  if (pendingAttachments.length === 0) {
+    imagePreview.classList.remove('active');
+    imagePreview.innerHTML = '';
+    return;
+  }
+  
+  imagePreview.classList.add('active');
+  imagePreview.innerHTML = pendingAttachments.map(function(att, i) {
+    var isImage = att.type && att.type.startsWith('image/');
+    var preview = isImage 
+      ? '<img src="' + att.dataUrl + '" style="max-height:60px;max-width:80px;border-radius:6px;object-fit:cover">'
+      : '<div style="width:50px;height:50px;background:#333;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:20px">📎</div>';
+    return '<div style="position:relative;display:inline-block;margin:4px">' +
+      preview +
+      '<div style="font-size:10px;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + att.name + '</div>' +
+      '<button onclick="removeAttachment(' + i + ')" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;border:none;background:#ef4444;color:white;font-size:12px;cursor:pointer;line-height:1">×</button>' +
+      '</div>';
+  }).join('');
+}
+
+function clearAttachments() {
+  pendingAttachments = [];
+  renderAttachmentPreview();
   updateSendBtn();
 }
 
@@ -2500,16 +2584,18 @@ document.addEventListener('click', function(e) {
 });
 
 fileInput.addEventListener('change', async function(e) {
-  var file = e.target.files[0];
-  if (!file) return;
-  try {
-    var result = await processImage(file);
-    showImagePreview(result.base64, result.dataUrl, result.name);
-  } catch (err) {}
+  var files = e.target.files;
+  if (!files || files.length === 0) return;
+  for (var i = 0; i < files.length; i++) {
+    try {
+      var result = await processFile(files[i]);
+      addAttachment(result);
+    } catch (err) { console.error('Failed to process file:', err); }
+  }
   fileInput.value = '';
 });
 
-previewCancel.addEventListener('click', clearImagePreview);
+previewCancel.addEventListener('click', clearAttachments);
 
 var dragCounter = 0;
 
@@ -2531,20 +2617,22 @@ messagesEl.addEventListener('drop', async function(e) {
   e.preventDefault();
   dragCounter = 0;
   dragOverlay.classList.remove('active');
-  var file = e.dataTransfer.files[0];
-  if (!file || !file.type.startsWith('image/')) return;
-  try {
-    var result = await processImage(file);
-    showImagePreview(result.base64, result.dataUrl, result.name);
-  } catch (err) {}
+  var files = e.dataTransfer.files;
+  if (!files || files.length === 0) return;
+  for (var i = 0; i < files.length; i++) {
+    try {
+      var result = await processFile(files[i]);
+      addAttachment(result);
+    } catch (err) { console.error('Failed to process file:', err); }
+  }
 });
 
 cameraFileInput.addEventListener('change', async function(e) {
   var file = e.target.files[0];
   if (!file) return;
   try {
-    var result = await processImage(file);
-    showImagePreview(result.base64, result.dataUrl, result.name);
+    var result = await processFile(file);
+    addAttachment(result);
   } catch (err) {}
   cameraFileInput.value = '';
 });
@@ -2615,25 +2703,36 @@ camRetakeBtn.addEventListener('click', function() {
 
 camUseBtn.addEventListener('click', function() {
   if (capturedImageBase64) {
-    showImagePreview(capturedImageBase64, 'data:image/jpeg;base64,' + capturedImageBase64, 'camera-photo.jpg');
+    addAttachment({
+      base64: capturedImageBase64,
+      dataUrl: 'data:image/jpeg;base64,' + capturedImageBase64,
+      name: 'camera-photo.jpg',
+      type: 'image/jpeg'
+    });
   }
   closeCamera();
 });
 
-function sendWithImage() {
+function sendWithAttachments() {
   var text = inputEl.value.trim();
-  var hasImage = !!pendingImageBase64;
+  var hasAttachments = pendingAttachments.length > 0;
   var hasText = !!text;
 
-  if (!connected || (!hasText && !hasImage)) return;
+  if (!connected || (!hasText && !hasAttachments)) return;
 
   var msgOpts = { timestamp: Date.now() };
   if (replyTarget) {
     msgOpts.replyTo = { sender: replyTarget.sender, text: replyTarget.text, bubbleEl: replyTarget.bubbleEl };
   }
 
-  if (hasImage) {
-    addImageMessage(text, 'user', 'data:image/jpeg;base64,' + pendingImageBase64);
+  // Show user message with attachments
+  if (hasAttachments) {
+    var firstImage = pendingAttachments.find(function(a) { return a.type && a.type.startsWith('image/'); });
+    if (firstImage) {
+      addImageMessage(text, 'user', firstImage.dataUrl);
+    } else {
+      addMessage(text + ' [' + pendingAttachments.length + ' attachment(s)]', 'user', msgOpts);
+    }
   } else {
     addMessage(text, 'user', msgOpts);
   }
@@ -2648,8 +2747,12 @@ function sendWithImage() {
     sendText = '> ' + quoteSender + ': ' + quoteSnippet + '\n\n' + text;
   }
 
-  if (hasImage) {
-    secureSend(JSON.stringify({ type: 'image', data: pendingImageBase64, caption: sendText || '' }));
+  if (hasAttachments) {
+    // Send attachments with message
+    var attachmentData = pendingAttachments.map(function(a) {
+      return { data: a.base64, name: a.name, type: a.type };
+    });
+    secureSend(JSON.stringify({ type: 'attachments', attachments: attachmentData, caption: sendText || '' }));
   } else {
     secureSend(JSON.stringify({ type: 'send', text: sendText }));
   }
@@ -2657,7 +2760,7 @@ function sendWithImage() {
   clearReply();
   inputEl.value = '';
   inputEl.style.height = 'auto';
-  clearImagePreview();
+  clearAttachments();
   clearDraft();
 }
 
@@ -4347,9 +4450,7 @@ callEndBtnEl.addEventListener('touchend', function(e) {
   var deleteAvatarBtn = document.getElementById('deleteAvatarBtn');
   var avatarManagerClose = document.getElementById('avatarManagerClose');
 
-  var availableAvatars = [
-    { id: 'lobster', name: 'Lobster', emoji: '🦞', description: 'Default lobster', custom: false, color: 'f97316' }
-  ];
+  var availableAvatars = [];  // Populated from server via /api/avatar/list
   
   // Fetch avatar list from server (includes cloud only if file exists)
   function refreshAvatarList() {
@@ -4359,12 +4460,13 @@ callEndBtnEl.addEventListener('touchend', function(e) {
   }
   refreshAvatarList();
   // Prefer server's avatar selection (from pre-fetch), fall back to localStorage
-  var currentAvatar = (window.CLAWTIME_THEME && window.CLAWTIME_THEME.id) || localStorage.getItem('selectedAvatar') || 'lobster';
+  var currentAvatar = (window.CLAWTIME_THEME && window.CLAWTIME_THEME.id) || localStorage.getItem('selectedAvatar');
   var previewingAvatar = null;
   var previewAnimationId = null;
 
   function getAvatarData(id) {
-    return availableAvatars.find(function(a) { return a.id === id; }) || availableAvatars[0];
+    var found = availableAvatars.find(function(a) { return a.id === id; }) || availableAvatars[0];
+    return found || { id: id || 'unknown', emoji: '🎭', color: 'f97316', name: 'Loading...' };
   }
 
   // Apply avatar theme (emoji + color)
@@ -4442,6 +4544,18 @@ callEndBtnEl.addEventListener('touchend', function(e) {
           if (window.initAvatarScene) {
             window.initAvatarScene();
             console.log('[Avatar] Initialized:', avatarId);
+            // Wrap setAvatarState to sync with server
+            if (window.setAvatarState) {
+              var originalSetState = window.setAvatarState;
+              window.setAvatarState = function(state) {
+                originalSetState(state);
+                // Notify server of state change (for reconnect accuracy)
+                if (window.secureSend) {
+                  try { secureSend(JSON.stringify({ type: 'avatar_state', state: state })); } catch(e) {}
+                }
+              };
+              window.setAvatarState._original = originalSetState;
+            }
             // Trigger resize to ensure proper scaling
             window.dispatchEvent(new Event('resize'));
           } else {
@@ -4578,22 +4692,11 @@ callEndBtnEl.addEventListener('touchend', function(e) {
           // Remove from available avatars list
           availableAvatars = availableAvatars.filter(function(a) { return a.id !== deletedAvatar; });
           
-          // Only switch to lobster if we deleted the current avatar
-          if (wasCurrentAvatar) {
-            currentAvatar = 'lobster';
-            localStorage.setItem('selectedAvatar', 'lobster');
-            applyAvatarTheme('lobster');
-            previewingAvatar = 'lobster';
-            loadAvatar('lobster').then(function() {
-              renderAvatarList();
-            });
-          } else {
-            // Stay on current avatar, just update the list
-            previewingAvatar = currentAvatar;
-            loadAvatar(currentAvatar).then(function() {
-              renderAvatarList();
-            });
-          }
+          // Server prevents deleting current avatar, so just update the list
+          previewingAvatar = currentAvatar;
+          loadAvatar(currentAvatar).then(function() {
+            renderAvatarList();
+          });
           // Close the modal
           avatarManagerModal.classList.remove('open');
         } else {

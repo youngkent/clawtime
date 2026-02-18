@@ -121,8 +121,23 @@ export function saveOrUpdateByRunId(runId, data) {
     }
     messages.push(entry);
   } else {
-    // Update existing message
-    messages[idx].text = data.text || '';
+    // Update existing message - but NEVER let shorter text overwrite longer
+    const currentLen = (messages[idx].text || '').length;
+    const newLen = (data.text || '').length;
+    
+    if (newLen >= currentLen - 10) {
+      // New text is >= current (cumulative delta) — update
+      messages[idx].text = data.text || '';
+    } else if (data.final && newLen < currentLen * 0.5) {
+      // Final is much shorter — keep existing text, just mark as final
+      console.warn(`[store] Final shorter than accumulated (${newLen} vs ${currentLen}), keeping longer text`);
+    } else if (data.final) {
+      // Final is similar length — use it
+      messages[idx].text = data.text || '';
+    } else {
+      console.warn(`[store] Ignoring shorter delta: ${newLen} vs ${currentLen} for runId ${runId?.slice(0,8)}`);
+    }
+    
     if (data.images && data.images.length > 0) {
       messages[idx].images = data.images;
     }

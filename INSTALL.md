@@ -2,80 +2,81 @@
 
 Webchat interface for OpenClaw with passkey auth, 3D avatars, and voice mode.
 
-## Quick Start
+## Prerequisites
+
+- OpenClaw gateway running with a configured token
+- Node.js 18+
+
+## Install
+
+Before running the install commands, **ask the user what kind of avatar they want** (animal, character, style, colors). Then create a custom avatar in `~/.clawtime/avatars/` following the template in SKILL.md.
 
 ```bash
+# 1. Clone and install
 cd ~/.openclaw/workspace
 git clone https://github.com/youngkent/clawtime.git
 cd clawtime
 npm install
-./scripts/setup.sh
-```
 
-The setup script prompts for bot name/emoji, configures gateway token, and starts ClawTime.
+# 2. Install cloudflared
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$(uname -m | sed 's/aarch64/arm64/;s/x86_64/amd64/') -o /tmp/cloudflared
+chmod +x /tmp/cloudflared && sudo mv /tmp/cloudflared /usr/local/bin/
 
-## Remote Access
+# 3. Create tunnel service
+mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/clawtime-tunnel.service << 'EOF'
+[Unit]
+Description=ClawTime Cloudflare Tunnel
+After=network.target
 
-ClawTime requires a stable HTTPS URL for WebAuthn passkeys.
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://localhost:3000
+Restart=always
+RestartSec=5
 
-**Cloudflare Tunnel (recommended, free):**
-```bash
-# Quick tunnel (URL changes on restart)
-cloudflared tunnel --url http://localhost:3000
-
-# Named tunnel (stable URL, requires setup)
-cloudflared tunnel create clawtime
-cloudflared tunnel route dns clawtime your-subdomain.yourdomain.com
-cloudflared tunnel run clawtime
-```
-
-**ngrok (alternative):**
-```bash
-ngrok http 3000 --domain=your-subdomain.ngrok-free.dev
-```
-
-After setting up tunnel:
-```bash
-# Update ClawTime config
-sed -i 's|^PUBLIC_URL=.*|PUBLIC_URL=https://YOUR-TUNNEL-URL|' ~/.clawtime/.env
-
-# Add tunnel URL to gateway allowed origins
-openclaw config set gateway.controlUi.allowedOrigins '["https://YOUR-TUNNEL-URL"]'
-
-# Restart services
-systemctl --user restart clawtime openclaw-gateway
-```
-
-## Voice Mode
-
-**Browser STT (default)** — real-time transcription preview, no setup required.
-- Works on Chrome, Edge (limited iOS Safari support)
-- Config: `var callUseWhisper = false;` in `app.js`
-
-**Server-side Whisper (optional)** — better accuracy, works on all browsers.
-```bash
-# Install whisper.cpp
-cd /tmp && git clone https://github.com/ggerganov/whisper.cpp.git
-cd whisper.cpp && make
-bash ./models/download-ggml-model.sh base.en
-
-# Create transcribe script
-sudo tee /usr/local/bin/whisper-transcribe << 'EOF'
-#!/bin/bash
-/tmp/whisper.cpp/main -m /tmp/whisper.cpp/models/ggml-base.en.bin -f "$1" --no-timestamps -otxt 2>/dev/null
-cat "${1}.txt" && rm -f "${1}.txt"
+[Install]
+WantedBy=default.target
 EOF
-sudo chmod +x /usr/local/bin/whisper-transcribe
+
+systemctl --user daemon-reload
+systemctl --user enable --now clawtime-tunnel
+
+# 4. Get tunnel URL (wait a few seconds for it to appear)
+sleep 5
+journalctl --user -u clawtime-tunnel | grep -o 'https://[^ ]*trycloudflare.com' | tail -1
+
+# 5. Run setup — paste the tunnel URL when prompted
+./scripts/setup.sh
+
+# 6. Open the setup URL shown at end of setup.sh on your phone
+#    Register passkey with Face ID / fingerprint
+#    Add to home screen for app-like experience
 ```
-Enable with: `var callUseWhisper = true;` in `app.js`
 
-## Troubleshooting
+⚠️ Quick tunnel URLs change on restart. For a stable URL, use a [named Cloudflare tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps) or ngrok reserved domain.
 
-**Connection refused:** Check gateway token matches in `~/.clawtime/.env` and gateway config.
+## Text-to-Speech (TTS)
 
-**Origin rejected:** Add your tunnel URL to `gateway.controlUi.allowedOrigins`.
+ClawTime supports any TTS tool via the `TTS_COMMAND` env var. The command uses `{{TEXT}}` and `{{OUTPUT}}` placeholders.
 
-**WebSocket scope error:** Ensure ClawTime sends `role: 'operator'` and `scopes: ['operator.write', 'operator.read']` in connection params (see `src/websocket.js`).
+**edge-tts (recommended, free neural voices):**
+```bash
+pip install edge-tts
+echo 'TTS_COMMAND=edge-tts --text "{{TEXT}}" --write-media "{{OUTPUT}}" --voice en-US-AriaNeural' >> ~/.clawtime/.env
+```
+
+**piper (local, fast):**
+```bash
+echo 'TTS_COMMAND=echo "{{TEXT}}" | piper --model en_US-lessac-medium --output_file "{{OUTPUT}}"' >> ~/.clawtime/.env
+```
+
+**macOS say:**
+```bash
+echo 'TTS_COMMAND=say -o "{{OUTPUT}}.aiff" "{{TEXT}}" && ffmpeg -i "{{OUTPUT}}.aiff" -y "{{OUTPUT}}" && rm "{{OUTPUT}}.aiff"' >> ~/.clawtime/.env
+```
+
+After configuring, restart ClawTime: `systemctl --user restart clawtime`
 
 ---
 

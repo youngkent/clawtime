@@ -76,8 +76,12 @@ if (!fs.existsSync(configPath)) {
 // via URLs in its responses (e.g., "here's the image you sent: [Image: /media/...]").
 const MEDIA_DIR = '/tmp/clawtime-media';
 const TTS_DIR = '/tmp/clawtime-audio';
-const TTS_VOICE = process.env.TTS_VOICE || 'en-US-ChristopherNeural';
-const EDGE_TTS_BIN = process.env.EDGE_TTS_BIN || 'edge-tts';
+// Generic TTS command with placeholders: {{TEXT}} and {{OUTPUT}}
+// Examples:
+//   edge-tts: edge-tts --text "{{TEXT}}" --write-media "{{OUTPUT}}" --voice en-US-ChristopherNeural
+//   say (macOS): say -o "{{OUTPUT}}" --data-format=LEF32@22050 "{{TEXT}}" && ffmpeg -i "{{OUTPUT}}" -y "{{OUTPUT}}.mp3" && mv "{{OUTPUT}}.mp3" "{{OUTPUT}}"
+//   piper: echo "{{TEXT}}" | piper --model en_US-lessac-medium --output_file "{{OUTPUT}}"
+const TTS_COMMAND = process.env.TTS_COMMAND || 'edge-tts --text "{{TEXT}}" --write-media "{{OUTPUT}}" --voice en-US-ChristopherNeural';
 
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
 fs.mkdirSync(TTS_DIR, { recursive: true });
@@ -120,7 +124,6 @@ export {
   CREDENTIALS_FILE,
   MEDIA_DIR,
   TTS_DIR,
-  TTS_VOICE,
-  EDGE_TTS_BIN,
+  TTS_COMMAND,
   publicConfig,
 };

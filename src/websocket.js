@@ -54,6 +54,7 @@ export function setupWebSocket(server) {
     let gwWs = null;
     let connected = false;
     let voiceMode = false;
+    let currentAvatarState = 'idle'; // Track avatar state for reconnect accuracy
     const deltaTextByRun = new Map(); // Track accumulated delta text per runId
     const ttsSuppressedRuns = new Set(); // Runs where TTS was interrupted by barge-in
     let authenticated = false;
@@ -229,7 +230,8 @@ export function setupWebSocket(server) {
           if (msg.type === 'res' && msg.ok && msg.payload?.type === 'hello-ok') {
             connected = true;
             console.log(`[${visitorId}] Gateway connected`);
-            secureSend(JSON.stringify({ type: 'connected' }));
+            // Tell client current avatar state for accurate reconnect
+            secureSend(JSON.stringify({ type: 'connected', avatarState: currentAvatarState }));
 
             for (const pm of pendingMessages) {
               sendToGateway(pm.text, pm.attachments);
@@ -559,6 +561,11 @@ export function setupWebSocket(server) {
           secureSend(JSON.stringify({ type: 'history', messages }));
         }
 
+        // Track avatar state for accurate reconnect
+        if (msg.type === 'avatar_state' && msg.state) {
+          currentAvatarState = msg.state;
+        }
+
         // ── Image upload: save to disk, forward to gateway with attachment + URL ──
         // DECISION: We include the image URL in the message text (e.g., [Image: /media/...])
         // so the bot can reference and echo the image back in its response. The base64
@@ -594,6 +601,55 @@ export function setupWebSocket(server) {
           } catch (err) {
             console.error(`[${visitorId}] Image error:`, err.message);
             secureSend(JSON.stringify({ type: 'image_error', error: 'Failed to process image' }));
+          }
+        }
+
+        // Multi-attachment support (any file type)
+        if (msg.type === 'attachments' && msg.attachments && Array.isArray(msg.attachments)) {
+          try {
+            const caption = msg.caption || '';
+            const attachments = [];
+            const mediaUrls = [];
+            const imageUrls = [];
+
+            for (const att of msg.attachments) {
+              const attId = crypto.randomBytes(8).toString('hex');
+              const ext = (att.name || '').split('.').pop() || 'bin';
+              const fileName = `att-${attId}.${ext}`;
+              const filePath = path.join(MEDIA_DIR, fileName);
+              fs.writeFileSync(filePath, Buffer.from(att.data, 'base64'));
+
+              const mediaUrl = `/media/${fileName}`;
+              mediaUrls.push(`[${att.name || 'Attachment'}: ${mediaUrl}]`);
+              
+              if (att.type && att.type.startsWith('image/')) {
+                imageUrls.push(mediaUrl);
+              }
+
+              attachments.push({
+                type: att.type && att.type.startsWith('image/') ? 'image' : 'file',
+                mimeType: att.type || 'application/octet-stream',
+                fileName: att.name || fileName,
+                content: att.data,
+              });
+            }
+
+            const msgText = caption 
+              ? `${caption}\n${mediaUrls.join('\n')}`
+              : `${msg.attachments.length} attachment(s)\n${mediaUrls.join('\n')}`;
+
+            saveMessage({ role: 'user', text: msgText, images: imageUrls.length > 0 ? imageUrls : undefined });
+
+            if (connected && gwWs?.readyState === WebSocket.OPEN) {
+              sendToGateway(msgText, attachments);
+            } else {
+              pendingMessages.push({ text: msgText, attachments });
+            }
+
+            secureSend(JSON.stringify({ type: 'attachments_sent', count: msg.attachments.length }));
+          } catch (err) {
+            console.error(`[${visitorId}] Attachments error:`, err.message);
+            secureSend(JSON.stringify({ type: 'attachments_error', error: 'Failed to process attachments' }));
           }
         }
 

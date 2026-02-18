@@ -20,11 +20,11 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { execFile } from 'child_process';
+import { exec } from 'child_process';
 import { promisify } from 'util';
-import { TTS_DIR, TTS_VOICE, EDGE_TTS_BIN } from './config.js';
+import { TTS_DIR, TTS_COMMAND } from './config.js';
 
-const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 
 export function cleanTextForTTS(text) {
   return text
@@ -62,7 +62,12 @@ async function processTTSQueue(visitorId) {
       const ttsId = crypto.randomBytes(8).toString('hex');
       const ttsFile = `tts-${ttsId}.mp3`;
       const ttsPath = path.join(TTS_DIR, ttsFile);
-      await execFileAsync(EDGE_TTS_BIN, ['--text', clean, '--write-media', ttsPath, '--voice', TTS_VOICE]);
+      // Build command from template, escaping text for shell
+      const escapedText = clean.replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
+      const cmd = TTS_COMMAND
+        .replace(/\{\{TEXT\}\}/g, escapedText)
+        .replace(/\{\{OUTPUT\}\}/g, ttsPath);
+      await execAsync(cmd);
       if (clientWs.readyState === 1) {
         const audioBuffer = fs.readFileSync(ttsPath);
         const audioData = audioBuffer.toString('base64');
