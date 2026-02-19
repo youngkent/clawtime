@@ -31,7 +31,7 @@ import { loadCredentials } from './src/credentials.js';
 import { handleRequest } from './src/routes.js';
 import { setupWebSocket } from './src/websocket.js';
 import { setupInjectRoutes } from './src/inject.js';
-import { cleanupIncompleteMessages } from './src/store.js';
+import { cleanupIncompleteMessages, flushSync } from './src/store.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // § 13. SERVER STARTUP
@@ -133,6 +133,10 @@ async function gracefulShutdown(signal) {
   } else {
     console.log('[Shutdown] All responses saved, exiting cleanly');
   }
+  
+  // Flush any pending store writes
+  console.log('[Shutdown] Flushing message store...');
+  flushSync();
   
   // Now close everything
   server.close(() => {

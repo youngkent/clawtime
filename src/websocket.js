@@ -34,7 +34,7 @@ import { auditLog } from './security.js';
 import { cleanExpiredSessions, ipMatches } from './helpers.js';
 import { generateAndSendTTS } from './tts.js';
 import { transcribeAudio } from './stt.js';
-import { saveMessage, getMessages, saveOrUpdateByRunId, saveWidgetResponse } from './store.js';
+import { saveMessage, getMessages, saveOrUpdateByMessageId, saveWidgetResponse } from './store.js';
 
 export function setupWebSocket(server, options = {}) {
   const wss = new WebSocketServer({ server });
@@ -50,8 +50,10 @@ export function setupWebSocket(server, options = {}) {
   const sharedRunIds = new Set();
   const RUNID_FILE = path.join(DATA_DIR, 'pending-runids.json');
   let lastGatewayMessageTime = Date.now(); // Track for reconnect sync
-  const runIdTextCache = new Map(); // Track last text per runId for new message detection
-  const runIdToMessageId = new Map(); // Map runId to stable messageId
+  // Message tracking - don't rely on runId
+  let currentBotMessageId = null; // Current streaming message
+  let expectingNewMessage = true; // Next delta starts a new message
+  let lastSentText = ''; // Track text sent to compute delta
   
   function persistRunIds() {
     const data = {};
@@ -289,36 +291,51 @@ export function setupWebSocket(server, options = {}) {
           const cleanText = text.replace(/\[\[WIDGET:[\s\S]*?\]\]/g, '').trim();
           extractAndSendWidgets(text, payload.runId);
           
-          // Detect new message boundary (runId reuse detection)
-          const cachedText = runIdTextCache.get(payload.runId) || '';
-          const isNewMessage = !runIdToMessageId.has(payload.runId) || (
-            cachedText.length > 50 && 
-            !cleanText.startsWith(cachedText) && 
-            !cachedText.startsWith(cleanText)
-          );
-          
-          // Assign stable messageId (new for each distinct message)
-          let messageId = runIdToMessageId.get(payload.runId);
-          if (isNewMessage) {
+          // Assign messageId based on message flow (not runId)
+          // New message starts after: user sends, or previous final received
+          let messageId;
+          if (expectingNewMessage || !currentBotMessageId) {
             messageId = crypto.randomUUID();
-            runIdToMessageId.set(payload.runId, messageId);
-            // cachedText handling removed - delta detection now in store.js
+            currentBotMessageId = messageId;
+            expectingNewMessage = false;
+            lastSentText = ''; // Reset delta tracking for new message
+          } else {
+            messageId = currentBotMessageId;
           }
           
-          // Update text cache
-          runIdTextCache.set(payload.runId, cleanText);
+          // After final, next delta starts new message
           if (state === 'final') {
-            runIdTextCache.delete(payload.runId);
-            runIdToMessageId.delete(payload.runId);
+            expectingNewMessage = true;
+            lastSentText = '';
           }
           
-          // Save to store immediately (uses prefix detection internally)
+          // Save to store using messageId (returns accumulated text for persistence)
+          let accumulatedText = cleanText;
           if (cleanText || images.length > 0) {
-            saveOrUpdateByRunId(payload.runId, { text: cleanText, images: images.length > 0 ? images : undefined, final: state === 'final' });
+            const result = saveOrUpdateByMessageId(messageId, { text: cleanText, images: images.length > 0 ? images : undefined, final: state === 'final' });
+            if (result) {
+              accumulatedText = result.text;
+            }
           }
           
-          // Broadcast to clients with stable messageId
-          broadcast({ type: 'chat', state, messageId, text: cleanText, images: images.length > 0 ? images : undefined });
+          // Compute delta: what's new since last broadcast
+          let deltaText = '';
+          if (accumulatedText.startsWith(lastSentText)) {
+            // Normal continuation — send only the new part
+            deltaText = accumulatedText.slice(lastSentText.length);
+          } else {
+            // New block or reset — send full accumulated (client will handle)
+            deltaText = accumulatedText;
+          }
+          lastSentText = accumulatedText;
+          
+          // Reset tracking on final
+          if (state === 'final') {
+            lastSentText = '';
+          }
+          
+          // Broadcast delta to clients
+          broadcast({ type: 'chat', state, messageId, text: deltaText, images: images.length > 0 ? images : undefined });
           
           // Avatar state machine (server is source of truth)
           if (state === 'delta') {
@@ -393,6 +410,8 @@ export function setupWebSocket(server, options = {}) {
     if (attachments?.length > 0) req.params.attachments = attachments;
     sharedPendingSends.add(reqId);
     sharedGwWs.send(JSON.stringify(req));
+    // Next bot response should be a new message
+    expectingNewMessage = true;
     return true;
   }
   
