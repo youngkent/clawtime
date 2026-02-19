@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-const DATA_DIR = process.env.CLAWTIME_DATA || path.join(os.homedir(), '.clawtime');
+const DATA_DIR = process.env.CLAWTIME_DATA_DIR || process.env.CLAWTIME_DATA || path.join(os.homedir(), '.clawtime');
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 
 // Load persisted sessions on startup

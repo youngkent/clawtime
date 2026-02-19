@@ -8,7 +8,11 @@
     "start": "node server.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
-    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
+    "lint": "eslint src/ public/*.js --fix",
+    "lint:check": "eslint src/ public/*.js",
+    "format": "prettier --write 'src/**/*.js' 'public/*.js'",
+    "format:check": "prettier --check 'src/**/*.js' 'public/*.js'"
   },
   "keywords": [
     "openclaw",
@@ -30,7 +34,10 @@
     "ws": "^8.19.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@jest/globals": "^30.2.0",
-    "jest": "^30.2.0"
+    "eslint": "^9.39.2",
+    "jest": "^30.2.0",
+    "prettier": "^3.8.1"
   }
 }

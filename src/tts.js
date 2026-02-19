@@ -62,10 +62,12 @@ async function processTTSQueue(visitorId) {
       const ttsId = crypto.randomBytes(8).toString('hex');
       const ttsFile = `tts-${ttsId}.mp3`;
       const ttsPath = path.join(TTS_DIR, ttsFile);
-      // Build command from template, escaping text for shell
-      const escapedText = clean.replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
+      // Build command from template with secure shell escaping
+      // Use POSIX single-quote method: wrap in single quotes, escape embedded single quotes as '\''
+      const escapedText = clean.replace(/'/g, "'\\''");
+      // Replace "{{TEXT}}" or '{{TEXT}}' or {{TEXT}} with properly quoted text
       const cmd = TTS_COMMAND
-        .replace(/\{\{TEXT\}\}/g, escapedText)
+        .replace(/"?\{\{TEXT\}\}"?/g, "'" + escapedText + "'")
         .replace(/\{\{OUTPUT\}\}/g, ttsPath);
       await execAsync(cmd);
       if (clientWs.readyState === 1) {
@@ -74,7 +76,7 @@ async function processTTSQueue(visitorId) {
         const sendFn = clientWs._secureSend || ((d) => clientWs.send(d));
         sendFn(JSON.stringify({ type: 'tts_audio', audioData, runId: runId || null }));
       }
-      setTimeout(() => { try { fs.unlinkSync(ttsPath); } catch {} }, 30000);
+      setTimeout(() => { try { fs.unlinkSync(ttsPath); } catch { /* ignore */ } }, 30000);
     } catch (err) {
       console.error(`[${visitorId}] TTS error:`, err.message);
     }

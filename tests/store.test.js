@@ -137,47 +137,19 @@ describe('Message Store', () => {
       expect(messages[0].text).toBe('Hello world');
     });
 
-    test('should NOT overwrite longer text with shorter text', () => {
+    test('should always update with new text (same runId)', () => {
       const messages = [{
         id: 'existing',
         runId: 'run-123',
         role: 'bot',
-        text: 'This is a long message with lots of content',
+        text: 'Hello world complete message',
         streaming: true
       }];
       
-      const runId = 'run-123';
-      const shorterText = 'Short';
-      const currentLen = messages[0].text.length;
-      const newLen = shorterText.length;
+      // Same runId = just update, no comparison needed
+      messages[0].text = 'Hi';
       
-      // Simulate protection: only update if new text is >= current - 10
-      if (newLen >= currentLen - 10) {
-        messages[0].text = shorterText;
-      }
-      
-      // Should NOT have been updated
-      expect(messages[0].text).toBe('This is a long message with lots of content');
-    });
-
-    test('should allow longer text to update', () => {
-      const messages = [{
-        id: 'existing',
-        runId: 'run-123',
-        role: 'bot',
-        text: 'Short',
-        streaming: true
-      }];
-      
-      const longerText = 'This is a much longer message';
-      const currentLen = messages[0].text.length;
-      const newLen = longerText.length;
-      
-      if (newLen >= currentLen - 10) {
-        messages[0].text = longerText;
-      }
-      
-      expect(messages[0].text).toBe('This is a much longer message');
+      expect(messages[0].text).toBe('Hi');
     });
 
     test('should handle final state correctly', () => {
@@ -195,33 +167,6 @@ describe('Message Store', () => {
       
       expect(messages[0].streaming).toBeUndefined();
       expect(messages[0].runId).toBeUndefined();
-    });
-
-    test('should keep longer text even when final is shorter', () => {
-      const messages = [{
-        id: 'existing',
-        runId: 'run-123',
-        role: 'bot',
-        text: 'This is a very long accumulated message from streaming',
-        streaming: true
-      }];
-      
-      const finalText = 'Short final';
-      const currentLen = messages[0].text.length;
-      const newLen = finalText.length;
-      const isFinal = true;
-      
-      // Protection: if final is <50% of current, keep longer
-      if (newLen >= currentLen - 10) {
-        messages[0].text = finalText;
-      } else if (isFinal && newLen < currentLen * 0.5) {
-        // Keep existing, just mark as final
-        delete messages[0].streaming;
-      }
-      
-      // Should have kept the longer text
-      expect(messages[0].text).toBe('This is a very long accumulated message from streaming');
-      expect(messages[0].streaming).toBeUndefined();
     });
   });
 

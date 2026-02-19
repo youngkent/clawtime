@@ -11,6 +11,7 @@
   var currentState = 'idle';
   var connectionState = 'connecting';
   var isInitialized = false;
+  var userRotationY = 0; // Manual rotation from drag
   var avatarFlash = document.getElementById('avatarFlash');
   var thinkingStartTime = 0;
   var workingTransitionMs = 3000;
@@ -159,6 +160,40 @@
 
     isInitialized = true;
     animate();
+    
+    // Drag to rotate character
+    var dragActive = false, dragLastX = 0;
+    var canvas = renderer.domElement;
+    canvas.style.cursor = 'grab';
+    canvas.addEventListener('mousedown', function(e) {
+      e.stopPropagation(); // Prevent avatar panel click handler
+      dragActive = true;
+      dragLastX = e.clientX;
+      canvas.style.cursor = 'grabbing';
+    });
+    window.addEventListener('mousemove', function(e) {
+      if (!dragActive) return;
+      userRotationY += (e.clientX - dragLastX) * 0.01;
+      dragLastX = e.clientX;
+    });
+    window.addEventListener('mouseup', function() {
+      dragActive = false;
+      canvas.style.cursor = 'grab';
+    });
+    canvas.addEventListener('touchstart', function(e) {
+      e.stopPropagation();
+      if (e.touches.length === 1) { dragActive = true; dragLastX = e.touches[0].clientX; }
+    }, { passive: false });
+    window.addEventListener('touchmove', function(e) {
+      if (!dragActive || e.touches.length !== 1) return;
+      userRotationY += (e.touches[0].clientX - dragLastX) * 0.01;
+      dragLastX = e.touches[0].clientX;
+    }, { passive: true });
+    window.addEventListener('touchend', function() { dragActive = false; });
+    canvas.addEventListener('dblclick', function(e) {
+      e.stopPropagation();
+      userRotationY = 0;
+    });
     
     window.addEventListener('resize', function() {
       var w = container.clientWidth;
@@ -348,40 +383,40 @@
     mouth.visible = false;
     character.add(mouth);
 
-    // Laptop (for working/coding state) - big and prominent
+    // Laptop (for working/coding state) - big and prominent, screen faces viewer
     var laptopBase = box(2.8, 0.15, 1.8, 0x1f2937);
     laptopBase.position.set(0, 0.3, 3.2);
     character.add(laptopBase);
     
-    // Laptop screen frame
+    // Laptop screen frame - positioned past base so it faces camera
     var laptopScreen = box(2.6, 1.8, 0.1, 0x111827);
-    laptopScreen.position.set(0, 1.4, 2.2);
-    laptopScreen.rotation.x = -0.3;
+    laptopScreen.position.set(0, 1.4, 4.2);
+    laptopScreen.rotation.x = 0.3; // Tilt toward viewer
     character.add(laptopScreen);
     
-    // Screen display (glowing)
+    // Screen display (glowing) - on the front of screen frame
     var laptopDisplay = box(2.3, 1.5, 0.02, 0x0ea5e9, 0x0ea5e9);
-    laptopDisplay.position.set(0, 1.4, 2.14);
-    laptopDisplay.rotation.x = -0.3;
+    laptopDisplay.position.set(0, 1.4, 4.14);
+    laptopDisplay.rotation.x = 0.3;
     character.add(laptopDisplay);
     
-    // Code lines on screen (visual detail)
+    // Code lines on screen (visual detail) - on front face
     var codeLine1 = box(1.8, 0.08, 0.01, 0x4ade80, 0x4ade80);
-    codeLine1.position.set(-0.2, 1.7, 2.1);
-    codeLine1.rotation.x = -0.3;
+    codeLine1.position.set(-0.2, 1.7, 4.1);
+    codeLine1.rotation.x = 0.3;
     character.add(codeLine1);
     
     var codeLine2 = box(1.4, 0.08, 0.01, 0xfbbf24, 0xfbbf24);
-    codeLine2.position.set(0, 1.5, 2.1);
-    codeLine2.rotation.x = -0.3;
+    codeLine2.position.set(0, 1.5, 4.1);
+    codeLine2.rotation.x = 0.3;
     character.add(codeLine2);
     
     var codeLine3 = box(2.0, 0.08, 0.01, 0x60a5fa, 0x60a5fa);
-    codeLine3.position.set(0.1, 1.3, 2.1);
-    codeLine3.rotation.x = -0.3;
+    codeLine3.position.set(0.1, 1.3, 4.1);
+    codeLine3.rotation.x = 0.3;
     character.add(codeLine3);
     
-    // Keyboard with keys
+    // Keyboard with keys - between lobster and screen
     var keyboard = box(2.2, 0.05, 1.0, 0x374151);
     keyboard.position.set(0, 0.4, 3.2);
     character.add(keyboard);
@@ -397,9 +432,9 @@
       }
     }
     
-    // Screen glow light (illuminates lobster face when working)
+    // Screen glow light (illuminates from screen toward viewer)
     var screenGlow = new THREE.PointLight(0x0ea5e9, 0, 5);
-    screenGlow.position.set(0, 2, 2.5);
+    screenGlow.position.set(0, 2, 4.5);
     character.add(screenGlow);
     window._screenGlow = screenGlow;
     
@@ -464,7 +499,7 @@
     // State-based animations
     // Reset character and features for clean state transitions
     character.position.x = 0;
-    character.rotation.y = 0;
+    character.rotation.y = userRotationY; // Preserve user drag rotation
     character.rotation.z = 0;
     if (currentState !== 'working' && currentState !== 'coding') {
       character.rotation.x = 0;
@@ -510,7 +545,7 @@
     } else if (currentState === 'talking') {
       // Energetic! Mouth moves big, gesturing with claws
       character.position.y = Math.sin(elapsed * 4) * 0.12;
-      character.rotation.y = Math.sin(elapsed * 2) * 0.08;
+      character.rotation.y = userRotationY + Math.sin(elapsed * 2) * 0.08;
       if (leftClaw) leftClaw.rotation.z = 0.6 + Math.sin(elapsed * 7) * 0.25;
       if (rightClaw) rightClaw.rotation.z = -0.6 - Math.sin(elapsed * 7 + 1) * 0.25;
       if (mouth) {
@@ -528,7 +563,7 @@
     } else if (currentState === 'happy' || currentState === 'celebrating') {
       // SUPER excited! Big bounces, waving claws high
       character.position.y = Math.abs(Math.sin(elapsed * 6)) * 0.5;
-      character.rotation.y = Math.sin(elapsed * 4) * 0.2;
+      character.rotation.y = userRotationY + Math.sin(elapsed * 4) * 0.2;
       character.rotation.z = Math.sin(elapsed * 3) * 0.1;
       if (leftClaw) {
         leftClaw.rotation.z = 1.2 + Math.sin(elapsed * 10) * 0.4;
@@ -623,7 +658,7 @@
       character.position.z = 0.8;
       character.rotation.x = -0.2; // Lean forward more
       character.rotation.z = Math.sin(elapsed * 1.5) * 0.08;
-      character.rotation.y = Math.sin(elapsed * 1) * 0.1;
+      character.rotation.y = userRotationY + Math.sin(elapsed * 1) * 0.1;
       
       // Very big wide attentive eyes (30% bigger)
       if (leftEye) leftEye.scale.set(1.3, 1.35, 1);

@@ -30,6 +30,32 @@ export function loadMessages() {
 }
 
 /**
+ * Clean up incomplete messages on startup.
+ * Only removes streaming flags — does NOT delete messages.
+ */
+export function cleanupIncompleteMessages() {
+  const messages = loadMessages();
+  let cleaned = 0;
+  
+  for (const m of messages) {
+    if (m.streaming) {
+      delete m.streaming;
+      delete m.runId;
+      cleaned++;
+    }
+  }
+  
+  if (cleaned > 0) {
+    console.log(`[store] Cleaned ${cleaned} streaming flags on startup`);
+    try {
+      fs.writeFileSync(STORE_PATH, JSON.stringify(messages, null, 2), 'utf8');
+    } catch (err) {
+      console.error('[store] Failed to save cleaned messages:', err.message);
+    }
+  }
+}
+
+/**
  * Save a message to the store (append-only).
  * @param {{ role: 'user'|'bot', text: string, images?: string[], widget?: object, timestamp?: string }} msg
  * @returns {object} The saved message with id and timestamp
@@ -95,6 +121,7 @@ export function saveWidgetResponse(widgetId, response) {
  * Save or update a bot message by runId.
  * - If no message with this runId exists, create one
  * - If one exists, update its text/images
+ * - Auto-finalizes any OTHER streaming messages (prevents orphaned partials)
  * This allows saving streaming deltas so messages survive restarts.
  * 
  * @param {string} runId - The gateway runId
@@ -106,13 +133,38 @@ export function saveOrUpdateByRunId(runId, data) {
   
   console.log(`[store] saveOrUpdateByRunId: runId=${runId?.slice(0,8)}, exists=${idx !== -1}, final=${data.final}, textLen=${data.text?.length || 0}`);
   
-  if (idx === -1) {
-    // Create new message
+  const newText = data.text || '';
+  
+  // NOTE: We do NOT auto-finalize streaming messages anymore.
+  // Previous approach caused truncation when gateway doesn't send final
+  // (due to connection drops, turn splits, etc).
+  // Streaming messages will stay streaming until they receive their final,
+  // or until a new message with the same runId but different content arrives
+  // (handled by prefix detection below).
+  
+  // Detect if this is actually a NEW message disguised with same runId
+  // (happens if gateway reuses runId across turns)
+  // Use prefix matching: streaming updates extend existing text, new messages don't
+  const existingText = idx !== -1 ? (messages[idx].text || '') : '';
+  const isStreamingUpdate = idx !== -1 && (
+    newText.startsWith(existingText) ||  // New text extends existing
+    existingText.startsWith(newText)      // Or existing extends new (partial)
+  );
+  const isNewMessage = idx === -1 || !isStreamingUpdate;
+  
+  if (isNewMessage && idx !== -1) {
+    console.log(`[store] Detected new message with reused runId (prefix mismatch), finalizing old`);
+    delete messages[idx].streaming;
+    delete messages[idx].runId;
+  }
+  
+  if (idx === -1 || isNewMessage) {
+    // New runId = new message (or reused runId for new turn)
     const entry = {
       id: crypto.randomUUID(),
       runId,
       role: 'bot',
-      text: data.text || '',
+      text: newText,
       timestamp: new Date().toISOString(),
       streaming: !data.final,
     };
@@ -121,29 +173,14 @@ export function saveOrUpdateByRunId(runId, data) {
     }
     messages.push(entry);
   } else {
-    // Update existing message - but NEVER let shorter text overwrite longer
-    const currentLen = (messages[idx].text || '').length;
-    const newLen = (data.text || '').length;
-    
-    if (newLen >= currentLen - 10) {
-      // New text is >= current (cumulative delta) — update
-      messages[idx].text = data.text || '';
-    } else if (data.final && newLen < currentLen * 0.5) {
-      // Final is much shorter — keep existing text, just mark as final
-      console.warn(`[store] Final shorter than accumulated (${newLen} vs ${currentLen}), keeping longer text`);
-    } else if (data.final) {
-      // Final is similar length — use it
-      messages[idx].text = data.text || '';
-    } else {
-      console.warn(`[store] Ignoring shorter delta: ${newLen} vs ${currentLen} for runId ${runId?.slice(0,8)}`);
-    }
-    
+    // Same runId — update content (true streaming update)
+    messages[idx].text = newText;
     if (data.images && data.images.length > 0) {
       messages[idx].images = data.images;
     }
     if (data.final) {
       delete messages[idx].streaming;
-      delete messages[idx].runId; // No longer needed after final
+      delete messages[idx].runId;
     }
   }
   

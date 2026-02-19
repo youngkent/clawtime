@@ -7,7 +7,9 @@
 //   3. Client generates its ECDH keypair, sends { type: 'e2e_key', clientPublicKey }
 //   4. Both sides derive AES-256-GCM key via HKDF(ECDH shared secret)
 //   5. All subsequent messages are encrypted with AES-256-GCM
-//   6. Server opens a gateway WebSocket to relay chat messages
+//   6. Server opens a SHARED gateway WebSocket to relay chat messages
+//
+// ARCHITECTURE: Single shared gateway connection serves all clients (chatroom mode)
 //
 // DECISION: E2E Encryption (ECDH + AES-256-GCM)
 //   Even though we use TLS, E2E encryption protects against:
@@ -34,9 +36,371 @@ import { generateAndSendTTS } from './tts.js';
 import { transcribeAudio } from './stt.js';
 import { saveMessage, getMessages, saveOrUpdateByRunId, saveWidgetResponse } from './store.js';
 
-export function setupWebSocket(server) {
+export function setupWebSocket(server, options = {}) {
   const wss = new WebSocketServer({ server });
+  const gwUrl = options.gwUrl || GW_URL;
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SHARED STATE — All connections share these (single chatroom mode)
+  // ═══════════════════════════════════════════════════════════════════════════
+  const sharedClients = new Set();
+  let sharedGwWs = null;
+  let sharedGwConnected = false;
+  let sharedAvatarState = 'idle';
+  const sharedRunIds = new Set();
+  const RUNID_FILE = path.join(DATA_DIR, 'pending-runids.json');
+  let lastGatewayMessageTime = Date.now(); // Track for reconnect sync
+  const runIdTextCache = new Map(); // Track last text per runId for new message detection
+  const runIdToMessageId = new Map(); // Map runId to stable messageId
+  
+  function persistRunIds() {
+    const data = {};
+    for (const runId of sharedRunIds) {
+      data[runId] = Date.now();
+    }
+    try {
+      fs.writeFileSync(RUNID_FILE, JSON.stringify(data), 'utf8');
+    } catch (e) {
+      console.error('[shared] Failed to persist runIds:', e.message);
+    }
+  }
+  
+  function loadPersistedRunIds() {
+    try {
+      if (fs.existsSync(RUNID_FILE)) {
+        const data = JSON.parse(fs.readFileSync(RUNID_FILE, 'utf8'));
+        const now = Date.now();
+        for (const [runId, timestamp] of Object.entries(data)) {
+          // Only load runIds less than 2 minutes old
+          if (now - timestamp < 120000) {
+            sharedRunIds.add(runId);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[shared] Failed to load runIds:', e.message);
+    }
+  }
+  
+  // Load any persisted runIds from previous session
+  loadPersistedRunIds();
+  const sharedPendingSends = new Set();
+  const deltaTextByRun = new Map(); // Track accumulated delta text per runId (for TTS)
+  let sharedAwaitingResponse = 0; // Count of messages awaiting first delta
+  
+  function broadcast(msg) {
+    const data = JSON.stringify(msg);
+    for (const client of sharedClients) {
+      if (client.readyState === 1 && client._secureSend) {
+        client._secureSend(data);
+      }
+    }
+  }
+  
+  function broadcastExcept(msg, excludeWs) {
+    const data = JSON.stringify(msg);
+    for (const client of sharedClients) {
+      if (client !== excludeWs && client.readyState === 1 && client._secureSend) {
+        client._secureSend(data);
+      }
+    }
+  }
+  
+  function sharedTrackRunId(runId) {
+    sharedRunIds.add(runId);
+    persistRunIds();
+  }
+  
+  function sharedUntrackRunId(runId) {
+    sharedRunIds.delete(runId);
+    persistRunIds();
+  }
+  
+  function sharedIsTracked(runId) {
+    return sharedRunIds.has(runId);
+  }
+  
+  // ── Streaming TTS for voice mode clients ──
+  function handleTTSForClients(runId, state, text) {
+    for (const client of sharedClients) {
+      if (!client._voiceMode || client._ttsSuppressedRuns?.has(runId)) continue;
+      
+      if (state === 'delta' && text) {
+        const full = text;
+        deltaTextByRun.set(runId, full);
+
+        const spokenKey = runId + '_spoken';
+        let spokenLen = deltaTextByRun.get(spokenKey) || 0;
+        let newText = full.slice(spokenLen);
+
+        // Extract complete sentences
+        let sentenceMatch;
+        while ((sentenceMatch = newText.match(/^([\s\S]*?[.!?:])(?:\s|\n|$)/))) {
+          const sentence = sentenceMatch[1].trim();
+          spokenLen += sentenceMatch[0].length;
+          deltaTextByRun.set(spokenKey, spokenLen);
+          newText = full.slice(spokenLen);
+          if (sentence.length > 2) {
+            generateAndSendTTS(sentence, client._visitorId, client, runId);
+          }
+        }
+        // Handle bullet points / newline-separated chunks
+        let lineMatch;
+        while ((lineMatch = newText.match(/^([^\n]+)\n/))) {
+          const line = lineMatch[1].trim();
+          spokenLen += lineMatch[0].length;
+          deltaTextByRun.set(spokenKey, spokenLen);
+          newText = full.slice(spokenLen);
+          if (line.length > 2) {
+            generateAndSendTTS(line, client._visitorId, client, runId);
+          }
+        }
+      }
+
+      if (state === 'final') {
+        const accumulated = deltaTextByRun.get(runId) || '';
+        const full = accumulated.length >= (text || '').length ? accumulated : (text || accumulated);
+        const spokenKey = runId + '_spoken';
+        const spokenLen = deltaTextByRun.get(spokenKey) || 0;
+        const remaining = full.slice(spokenLen).trim();
+        if (remaining.length > 2) {
+          generateAndSendTTS(remaining, client._visitorId, client, runId);
+        }
+      }
+    }
+    
+    if (state === 'final') {
+      deltaTextByRun.delete(runId);
+      deltaTextByRun.delete(runId + '_spoken');
+      for (const client of sharedClients) {
+        client._ttsSuppressedRuns?.delete(runId);
+      }
+    }
+  }
+  
+  // ── Widget extraction from text ──
+  function extractAndSendWidgets(text, runId) {
+    const widgetMatches = text.match(/\[\[WIDGET:([\s\S]*?)\]\]/g);
+    const parsedWidgets = [];
+    
+    if (widgetMatches) {
+      for (const match of widgetMatches) {
+        try {
+          const jsonStr = match.replace(/^\[\[WIDGET:/, '').replace(/\]\]$/, '');
+          const widgetData = JSON.parse(jsonStr);
+          const widgetType = widgetData.widget || widgetData.type;
+          
+          if (widgetType && widgetData.id) {
+            // Track sent widgets per runId to avoid duplicates
+            const widgetKey = `${runId}:${widgetData.id}`;
+            if (!sharedSentWidgetIds.has(widgetKey)) {
+              sharedSentWidgetIds.add(widgetKey);
+              broadcast({ type: 'widget', widget: widgetType, ...widgetData });
+              parsedWidgets.push(widgetData);
+              saveMessage({ role: 'bot', text: '', widget: widgetData });
+            }
+          }
+        } catch (e) {
+          console.error('Failed to parse widget:', e.message);
+        }
+      }
+    }
+    return parsedWidgets;
+  }
+  const sharedSentWidgetIds = new Set();
+  
+  function connectSharedGateway() {
+    if (sharedGwWs && (sharedGwWs.readyState === WebSocket.OPEN || sharedGwWs.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+    
+    const wsOpts = PUBLIC_URL ? { headers: { 'Origin': PUBLIC_URL } } : {};
+    sharedGwWs = new WebSocket(gwUrl, wsOpts);
+    
+    
+    sharedGwWs.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        
+        if (msg.type === 'event' && msg.event === 'connect.challenge') {
+          sharedGwWs.send(JSON.stringify({
+            type: 'req', id: crypto.randomUUID(), method: 'connect',
+            params: {
+              minProtocol: 3, maxProtocol: 3,
+              client: { id: 'webchat-ui', displayName: 'ClawTime', version: '1.0.0', platform: 'web', mode: 'webchat' },
+              caps: [], role: 'operator', scopes: ['operator.write', 'operator.read'],
+              auth: { token: GW_TOKEN },
+            },
+          }));
+          return;
+        }
+        
+        if (msg.type === 'res' && msg.ok && msg.payload?.type === 'hello-ok') {
+          sharedGwConnected = true;
+          broadcast({ type: 'connected', avatarState: sharedAvatarState });
+          
+          // On reconnect, notify clients to refresh their local history
+          // (local store is source of truth, gateway history requires admin scope)
+          broadcast({ type: 'history_sync' });
+          
+          // Send any pending messages that were queued while gateway was connecting
+          for (const client of sharedClients) {
+            if (client._pendingMessages?.length > 0) {
+              for (const pm of client._pendingMessages) {
+                sharedSendToGateway(pm.text, pm.attachments);
+              }
+              client._pendingMessages = [];
+            }
+          }
+          return;
+        }
+        
+        if (msg.type === 'res' && msg.ok && sharedPendingSends.has(msg.id)) {
+          sharedPendingSends.delete(msg.id);
+          if (msg.payload?.runId) sharedTrackRunId(msg.payload.runId);
+          return;
+        }
+        
+        if (msg.type === 'res' && !msg.ok) {
+          console.error('[shared] Gateway error:', JSON.stringify(msg.error));
+          broadcast({ type: 'error', data: msg.error?.message || 'Gateway error' });
+          return;
+        }
+        
+        if (msg.type === 'event' && msg.event === 'chat') {
+          const payload = msg.payload;
+          if (payload?.sessionKey !== SESSION_KEY) return;
+          if (!sharedIsTracked(payload.runId)) return;
+          
+          // Update last message time for reconnect sync
+          lastGatewayMessageTime = Date.now();
+          
+          const state = payload.state;
+          const contentBlocks = payload.message?.content || [];
+          const text = contentBlocks.filter(b => b.type === 'text' && b.text).map(b => b.text).join('\n\n');
+          const images = contentBlocks.filter(b => b.type === 'image' && b.source?.data)
+            .map(b => 'data:' + (b.source.media_type || 'image/jpeg') + ';base64,' + b.source.data);
+          
+          // Skip internal signals
+          const trimmed = (text || '').trim();
+          if (trimmed === 'NO_REPLY' || trimmed === 'HEARTBEAT_OK') return;
+          
+          // Extract widgets
+          const cleanText = text.replace(/\[\[WIDGET:[\s\S]*?\]\]/g, '').trim();
+          extractAndSendWidgets(text, payload.runId);
+          
+          // Detect new message boundary (runId reuse detection)
+          const cachedText = runIdTextCache.get(payload.runId) || '';
+          const isNewMessage = !runIdToMessageId.has(payload.runId) || (
+            cachedText.length > 50 && 
+            !cleanText.startsWith(cachedText) && 
+            !cachedText.startsWith(cleanText)
+          );
+          
+          // Assign stable messageId (new for each distinct message)
+          let messageId = runIdToMessageId.get(payload.runId);
+          if (isNewMessage) {
+            messageId = crypto.randomUUID();
+            runIdToMessageId.set(payload.runId, messageId);
+            // cachedText handling removed - delta detection now in store.js
+          }
+          
+          // Update text cache
+          runIdTextCache.set(payload.runId, cleanText);
+          if (state === 'final') {
+            runIdTextCache.delete(payload.runId);
+            runIdToMessageId.delete(payload.runId);
+          }
+          
+          // Save to store immediately (uses prefix detection internally)
+          if (cleanText || images.length > 0) {
+            saveOrUpdateByRunId(payload.runId, { text: cleanText, images: images.length > 0 ? images : undefined, final: state === 'final' });
+          }
+          
+          // Broadcast to clients with stable messageId
+          broadcast({ type: 'chat', state, messageId, text: cleanText, images: images.length > 0 ? images : undefined });
+          
+          // Avatar state machine (server is source of truth)
+          if (state === 'delta') {
+            // First delta → talking (streaming response)
+            if (sharedAvatarState === 'thinking') {
+              sharedAwaitingResponse = Math.max(0, sharedAwaitingResponse - 1);
+              sharedAvatarState = 'talking';
+              broadcast({ type: 'avatar_state', state: 'talking' });
+            }
+            // Check for tool use → working
+            if (contentBlocks.some(b => b.type === 'tool_use')) {
+              sharedAvatarState = 'working';
+              broadcast({ type: 'avatar_state', state: 'working' });
+            }
+            // Check for code blocks → coding
+            else if (/```/.test(cleanText) && sharedAvatarState !== 'coding') {
+              sharedAvatarState = 'coding';
+              broadcast({ type: 'avatar_state', state: 'coding' });
+            }
+          } else if (state === 'final') {
+            sharedUntrackRunId(payload.runId);
+            
+            // Only show emotional state if no new messages awaiting response
+            if (sharedAwaitingResponse === 0 && sharedRunIds.size === 0) {
+              // Determine emotional state based on content
+              let emotionalState = 'happy';
+              if (/```/.test(cleanText) || /\bcode\b|\bfunction\b/i.test(cleanText)) {
+                emotionalState = 'coding';
+              } else if (/🎉|✅|done|complete|success|fixed/i.test(cleanText)) {
+                emotionalState = 'celebrating';
+              } else if (/error|fail|broken|can't|sorry/i.test(cleanText)) {
+                emotionalState = 'frustrated';
+              }
+              sharedAvatarState = emotionalState;
+              broadcast({ type: 'avatar_state', state: emotionalState });
+              
+              // Schedule idle after delay (only if still no activity)
+              setTimeout(() => {
+                if (sharedRunIds.size === 0 && sharedAwaitingResponse === 0) {
+                  sharedAvatarState = 'idle';
+                  broadcast({ type: 'avatar_state', state: 'idle' });
+                }
+              }, 3000);
+            }
+            // If there are pending sends, stay in thinking (already set)
+          }
+          
+          // TTS for voice mode
+          handleTTSForClients(payload.runId, state, cleanText);
+        }
+        
+        if (msg.type === 'event' && msg.event === 'tick') return;
+        
+      } catch (e) {
+        console.error('[shared] Parse error:', e.message);
+      }
+    });
+    
+    sharedGwWs.on('close', () => {
+      sharedGwConnected = false;
+      broadcast({ type: 'disconnected' });
+      setTimeout(() => { if (sharedClients.size > 0) connectSharedGateway(); }, 3000);
+    });
+    
+    sharedGwWs.on('error', (err) => console.error('[shared] Gateway error:', err.message));
+  }
+  
+  function sharedSendToGateway(text, attachments) {
+    if (!sharedGwWs || sharedGwWs.readyState !== WebSocket.OPEN) return false;
+    const reqId = crypto.randomUUID();
+    const req = { type: 'req', id: reqId, method: 'chat.send', params: { sessionKey: SESSION_KEY, message: text, idempotencyKey: crypto.randomUUID() } };
+    if (attachments?.length > 0) req.params.attachments = attachments;
+    sharedPendingSends.add(reqId);
+    sharedGwWs.send(JSON.stringify(req));
+    return true;
+  }
+  
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PER-CONNECTION HANDLERS
+  // ═══════════════════════════════════════════════════════════════════════════
+  
   wss.on('connection', (clientWs, req) => {
     const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
 
@@ -50,105 +414,43 @@ export function setupWebSocket(server) {
       return;
     }
 
-    console.log(`Client connected from ${clientIp}`);
-    let gwWs = null;
-    let connected = false;
-    let voiceMode = false;
-    let currentAvatarState = 'idle'; // Track avatar state for reconnect accuracy
-    const deltaTextByRun = new Map(); // Track accumulated delta text per runId
-    const ttsSuppressedRuns = new Set(); // Runs where TTS was interrupted by barge-in
     let authenticated = false;
-    let pendingMessages = [];
     const visitorId = crypto.randomUUID().slice(0, 8);
-    // Track runIds we initiated — persisted to survive restarts
-    const RUNID_FILE = path.join(DATA_DIR, 'pending-runids.json');
-    const RUNID_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
     
-    // Load persisted runIds (filter out expired ones)
-    function loadRunIds() {
-      try {
-        if (!fs.existsSync(RUNID_FILE)) return new Map();
-        const data = JSON.parse(fs.readFileSync(RUNID_FILE, 'utf8'));
-        const now = Date.now();
-        const valid = new Map();
-        for (const [runId, timestamp] of Object.entries(data)) {
-          if (now - timestamp < RUNID_EXPIRY_MS) {
-            valid.set(runId, timestamp);
-          }
-        }
-        return valid;
-      } catch (e) {
-        return new Map();
-      }
-    }
-    
-    // Save runIds to disk
-    function saveRunIds(runIds) {
-      try {
-        const obj = Object.fromEntries(runIds);
-        fs.writeFileSync(RUNID_FILE, JSON.stringify(obj), 'utf8');
-      } catch (e) {
-        console.error('Failed to save runIds:', e.message);
-      }
-    }
-    
-    // Load existing runIds from disk (survives restart)
-    const webchatRunIds = loadRunIds();
-    console.log(`[${visitorId}] Loaded ${webchatRunIds.size} pending runIds from disk`);
-    
-    // Add a runId (with timestamp for expiry)
-    function trackRunId(runId) {
-      webchatRunIds.set(runId, Date.now());
-      saveRunIds(webchatRunIds);
-    }
-    
-    // Remove a runId after final response received
-    function untrackRunId(runId) {
-      webchatRunIds.delete(runId);
-      saveRunIds(webchatRunIds);
-    }
-    
-    // Check if runId is tracked
-    function isTrackedRunId(runId) {
-      return webchatRunIds.has(runId);
-    }
+    // Per-client state (attached to clientWs for shared gateway access)
+    clientWs._visitorId = visitorId;
+    clientWs._voiceMode = false;
+    clientWs._ttsSuppressedRuns = new Set();
+    clientWs._pendingMessages = [];
 
     // ── Server-side connection health (ping stale clients) ──
     let lastPong = Date.now();
-    const PING_INTERVAL = 45000; // 45 seconds
-    const PING_TIMEOUT = 15000;  // 15 seconds to respond
+    const PING_INTERVAL = 45000;
+    const PING_TIMEOUT = 15000;
     
     const pingInterval = setInterval(() => {
-      if (clientWs.readyState !== 1) { // WebSocket.OPEN = 1
+      if (clientWs.readyState !== 1) {
         clearInterval(pingInterval);
         return;
       }
-      
-      // Check if last pong was too long ago (missed previous ping)
       if (Date.now() - lastPong > PING_INTERVAL + PING_TIMEOUT + 5000) {
-        console.log(`[${visitorId}] Client stale (no pong), closing`);
         clientWs.close(4000, 'Connection stale');
         clearInterval(pingInterval);
         return;
       }
-      
-      // Send ping using WebSocket protocol-level ping (more reliable)
       try {
         clientWs.ping();
       } catch (e) {
-        console.log(`[${visitorId}] Ping failed:`, e.message);
         clearInterval(pingInterval);
       }
     }, PING_INTERVAL);
     
-    clientWs.on('pong', () => {
-      lastPong = Date.now();
-    });
+    clientWs.on('pong', () => { lastPong = Date.now(); });
 
     // ── E2E Encryption State ──
-    let e2eKey = null; // AES-256-GCM key (Buffer) derived from ECDH
+    let e2eKey = null;
     let e2eReady = false;
-    let e2ePendingOutbound = []; // messages queued before key exchange completes
+    let e2ePendingOutbound = [];
 
     function e2eEncrypt(plaintext) {
       if (!e2eKey) return plaintext;
@@ -156,12 +458,7 @@ export function setupWebSocket(server) {
       const cipher = crypto.createCipheriv('aes-256-gcm', e2eKey, iv);
       const enc = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
       const tag = cipher.getAuthTag();
-      return JSON.stringify({
-        _e2e: true,
-        iv: iv.toString('base64'),
-        tag: tag.toString('base64'),
-        data: enc.toString('base64'),
-      });
+      return JSON.stringify({ _e2e: true, iv: iv.toString('base64'), tag: tag.toString('base64'), data: enc.toString('base64') });
     }
 
     function e2eDecrypt(raw) {
@@ -175,7 +472,7 @@ export function setupWebSocket(server) {
         decipher.setAuthTag(tag);
         return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
       } catch {
-        return raw; // not encrypted or decrypt failed — pass through
+        return raw;
       }
     }
 
@@ -187,313 +484,37 @@ export function setupWebSocket(server) {
         clientWs.send(data);
       }
     }
-    // Attach secureSend to clientWs so helper functions (TTS) can use it
     clientWs._secureSend = secureSend;
-
-    function connectToGateway() {
-      const wsOpts = PUBLIC_URL ? { headers: { 'Origin': PUBLIC_URL } } : {};
-      gwWs = new WebSocket(GW_URL, wsOpts);
-
-      gwWs.on('open', () => {
-        console.log(`[${visitorId}] Connected to gateway`);
-      });
-
-      gwWs.on('message', (raw) => {
-        try {
-          const msg = JSON.parse(raw.toString());
-
-          if (msg.type === 'event' && msg.event === 'connect.challenge') {
-            const connectReq = {
-              type: 'req',
-              id: crypto.randomUUID(),
-              method: 'connect',
-              params: {
-                minProtocol: 3,
-                maxProtocol: 3,
-                client: {
-                  id: 'webchat-ui',
-                  displayName: `Visitor ${visitorId}`,
-                  version: '1.0.0',
-                  platform: 'web',
-                  mode: 'webchat',
-                },
-                caps: [],
-                role: 'operator',
-                scopes: ['operator.write', 'operator.read'],
-                auth: { token: GW_TOKEN },
-              },
-            };
-            gwWs.send(JSON.stringify(connectReq));
-            return;
-          }
-
-          if (msg.type === 'res' && msg.ok && msg.payload?.type === 'hello-ok') {
-            connected = true;
-            console.log(`[${visitorId}] Gateway connected`);
-            // Tell client current avatar state for accurate reconnect
-            secureSend(JSON.stringify({ type: 'connected', avatarState: currentAvatarState }));
-
-            for (const pm of pendingMessages) {
-              sendToGateway(pm.text, pm.attachments);
-            }
-            pendingMessages = [];
-            return;
-          }
-
-          if (msg.type === 'res' && !msg.ok) {
-            console.error(`[${visitorId}] Gateway error:`, JSON.stringify(msg.error));
-            secureSend(JSON.stringify({ type: 'error', data: msg.error?.message || 'Connection failed' }));
-            return;
-          }
-
-          // Track runIds from our chat.send requests
-          if (msg.type === 'res' && msg.ok && pendingChatSends.has(msg.id)) {
-            pendingChatSends.delete(msg.id);
-            const runId = msg.payload?.runId;
-            if (runId) {
-              trackRunId(runId); // Persist to disk
-              console.log(`[${visitorId}] Tracking runId: ${runId}`);
-            }
-          }
-
-          // (History is now served from local store, not gateway)
-
-          if (msg.type === 'event' && msg.event === 'chat') {
-            const payload = msg.payload;
-            if (payload?.sessionKey !== SESSION_KEY) return;
-            
-            // ONLY accept responses to messages WE sent (tracked by runId)
-            if (!isTrackedRunId(payload.runId)) {
-              return; // Not our message — from Telegram or other channel
-            }
-
-            const state = payload.state;
-            const contentBlocks = payload.message?.content || [];
-            const allText = contentBlocks
-              .filter(b => b.type === 'text' && b.text)
-              .map(b => b.text)
-              .join('\n\n');
-            const text = allText;
-            const errorMsg = payload.errorMessage || '';
-            
-            // Extract images from content blocks
-            const images = contentBlocks
-              .filter(b => b.type === 'image' && b.source?.data)
-              .map(b => 'data:' + (b.source.media_type || 'image/jpeg') + ';base64,' + b.source.data);
-
-            const isBot = payload.message?.role === 'assistant' || state === 'delta' || state === 'final' || state === 'error';
-            if (!isBot) return;
-
-            // Detect tool_use blocks and send avatar state update
-            const hasToolUse = contentBlocks.some(b => b.type === 'tool_use');
-            if (hasToolUse && state === 'delta') {
-              secureSend(JSON.stringify({ type: 'avatar_state', state: 'working' }));
-              // Buffer text during tool calls — don't send partial text that will be overwritten
-              // Track that this runId has tool use so we buffer until final
-              if (!clientWs.toolUseRunIds) clientWs.toolUseRunIds = new Set();
-              clientWs.toolUseRunIds.add(payload.runId);
-            }
-
-            // If this runId had tool use, skip deltas — only send final
-            if (state === 'delta' && clientWs.toolUseRunIds?.has(payload.runId)) {
-              return; // Buffer until final response
-            }
-
-            var trimmed = text.trim();
-            if (trimmed === 'NO_REPLY' || trimmed === 'HEARTBEAT_OK') return;
-            if (!text && !hasToolUse && state === 'delta') return;
-
-            // Check for widget commands in the text: [[WIDGET:{...}]]
-            // Always clean widget commands from display text (even in deltas)
-            // But only parse and render widgets on final state (to avoid partial JSON)
-            let cleanText = text.replace(/\[\[WIDGET:[\s\S]*?\]\]/g, '').trim();
-            const widgetMatches = text.match(/\[\[WIDGET:([\s\S]*?)\]\]/g);
-            const parsedWidgets = [];
-            // Extract widgets on delta too (once we have complete JSON)
-            if (widgetMatches) {
-              // Track sent widgets to avoid duplicates during streaming
-              if (!clientWs.sentWidgetIds) clientWs.sentWidgetIds = new Set();
-              for (const match of widgetMatches) {
-                try {
-                  const jsonStr = match.replace(/^\[\[WIDGET:/, '').replace(/\]\]$/, '');
-                  const widgetData = JSON.parse(jsonStr);
-                  // Normalize: accept both "widget" and "type" for widget type
-                  const widgetType = widgetData.widget || widgetData.type;
-                  // Ensure required fields and not already sent
-                  if (widgetType && widgetData.id && !clientWs.sentWidgetIds.has(widgetData.id)) {
-                    clientWs.sentWidgetIds.add(widgetData.id);
-                    console.log('[Widget] Sending widget:', widgetData.id, widgetType);
-                    secureSend(JSON.stringify({
-                      type: 'widget',
-                      widget: widgetType,
-                      ...widgetData
-                    }));
-                    parsedWidgets.push(widgetData);
-                    // Save widget to history
-                    saveMessage({ role: 'bot', text: '', widget: widgetData });
-                  }
-                } catch (e) {
-                  console.error('Failed to parse widget:', e.message);
-                }
-              }
-            }
-
-            // Don't send empty chat messages after widget extraction
-            if (!cleanText && parsedWidgets.length > 0 && state === 'final') {
-              untrackRunId(payload.runId);
-              return;
-            }
-
-            // Save bot responses to local history (both deltas and final)
-            // This ensures messages survive server restarts mid-stream
-            // Always use cleanText (widget-stripped) to avoid saving raw [[WIDGET:...]] markup
-            const textToSave = cleanText;
-            if (state === 'delta' || state === 'final') {
-              if (textToSave || images.length > 0) {
-                saveOrUpdateByRunId(payload.runId, {
-                  text: textToSave,
-                  images: images.length > 0 ? images : undefined,
-                  final: state === 'final',
-                });
-              }
-              if (state === 'final') {
-                untrackRunId(payload.runId); // Done with this runId
-                clientWs.toolUseRunIds?.delete(payload.runId); // Clear tool use tracking
-              }
-            }
-
-            secureSend(JSON.stringify({
-              type: 'chat',
-              state,
-              runId: payload.runId,
-              text: cleanText || text,
-              error: errorMsg,
-              images: images.length > 0 ? images : undefined,
-            }));
-
-            // ── Streaming TTS: sentence-by-sentence as LLM deltas arrive ──
-            // How it works: each delta contains the FULL accumulated text so far.
-            // We track how many characters have already been sent to TTS ('_spoken').
-            // From the new portion, we extract complete sentences (ending in .!?:
-            // followed by whitespace) and newline-terminated lines (bullet points).
-            // Each extracted chunk is immediately queued for TTS generation.
-            if (voiceMode && !ttsSuppressedRuns.has(payload.runId)) {
-              if (state === 'delta' && text) {
-                const full = text;
-                deltaTextByRun.set(payload.runId, full);
-
-                // Find sentences not yet spoken
-                const spokenKey = payload.runId + '_spoken';
-                let spokenLen = deltaTextByRun.get(spokenKey) || 0;
-                let newText = full.slice(spokenLen);
-
-                // Extract ALL complete sentences
-                let sentenceMatch;
-                while ((sentenceMatch = newText.match(/^([\s\S]*?[.!?:])(?:\s|\n|$)/))) {
-                  const sentence = sentenceMatch[1].trim();
-                  // Advance past the match including the trailing whitespace
-                  const fullMatch = sentenceMatch[0];
-                  spokenLen += fullMatch.length;
-                  deltaTextByRun.set(spokenKey, spokenLen);
-                  newText = full.slice(spokenLen);
-                  if (sentence.length > 2) {
-                    generateAndSendTTS(sentence, visitorId, clientWs, payload.runId);
-                  }
-                }
-                // Also handle bullet points / list items / newline-separated chunks
-                let lineMatch;
-                while ((lineMatch = newText.match(/^([^\n]+)\n/))) {
-                  const line = lineMatch[1].trim();
-                  spokenLen += lineMatch[0].length;
-                  deltaTextByRun.set(spokenKey, spokenLen);
-                  newText = full.slice(spokenLen);
-                  if (line.length > 2) {
-                    generateAndSendTTS(line, visitorId, clientWs, payload.runId);
-                  }
-                }
-              }
-
-              if (state === 'final') {
-                // Speak any remaining unspoken text — prefer accumulated delta text (more complete)
-                const accumulated = deltaTextByRun.get(payload.runId) || '';
-                const full = accumulated.length >= (text || '').length ? accumulated : (text || accumulated);
-                const spokenKey = payload.runId + '_spoken';
-                const spokenLen = deltaTextByRun.get(spokenKey) || 0;
-                const remaining = full.slice(spokenLen).trim();
-                if (remaining.length > 2) {
-                  generateAndSendTTS(remaining, visitorId, clientWs, payload.runId);
-                }
-                deltaTextByRun.delete(payload.runId);
-                deltaTextByRun.delete(spokenKey);
-                ttsSuppressedRuns.delete(payload.runId);
-              }
-            }
-            return;
-          }
-
-          if (msg.type === 'event' && msg.event === 'tick') return;
-
-        } catch (e) {
-          console.error(`[${visitorId}] Parse error:`, e.message);
-        }
-      });
-
-      gwWs.on('close', (code, reason) => {
-        // Gateway connection lost — client will see 'disconnected' status
-        connected = false;
-        secureSend(JSON.stringify({ type: 'disconnected' }));
-      });
-
-      gwWs.on('error', (err) => {
-        console.error(`[${visitorId}] Gateway error:`, err.message);
-      });
-    }
-
-    const pendingChatSends = new Set();
-
-    function sendToGateway(text, attachments) {
-      const idempotencyKey = crypto.randomUUID();
-      const reqId = crypto.randomUUID();
-      const req = {
-        type: 'req',
-        id: reqId,
-        method: 'chat.send',
-        params: {
-          sessionKey: SESSION_KEY,
-          message: text,
-          idempotencyKey,
-        },
-      };
-      if (attachments && attachments.length > 0) {
-        req.params.attachments = attachments;
-      }
-      pendingChatSends.add(reqId);
-      gwWs.send(JSON.stringify(req));
-    }
 
     clientWs.on('message', async (raw) => {
       try {
-        // Decrypt if E2E is active
         const rawStr = e2eReady ? e2eDecrypt(raw.toString()) : raw.toString();
         const msg = JSON.parse(rawStr);
 
+        // ── Authentication ──
         if (msg.type === 'auth') {
           cleanExpiredSessions();
           const sess = sessions.get(msg.token);
-          console.log(`[${visitorId}] Auth check: token=${msg.token?.slice(0,8)}..., sessFound=${!!sess}`);
           if (msg.token && sess && ipMatches(sess.ip, clientIp)) {
             authenticated = true;
             setActiveClientWs(clientWs);
+            sharedClients.add(clientWs);
             auditLog('ws_auth', { ip: clientIp, visitorId });
-            console.log(`[${visitorId}] Authenticated from ${clientIp}`);
-            // Generate ECDH keypair and send public key with auth_ok
+            
             const serverECDH = crypto.createECDH('prime256v1');
             serverECDH.generateKeys();
-            const serverPubKey = serverECDH.getPublicKey('base64');
-            clientWs.send(JSON.stringify({ type: 'auth_ok', serverPublicKey: serverPubKey }));
-            // Store ECDH object for when client sends their key
+            clientWs.send(JSON.stringify({ type: 'auth_ok', serverPublicKey: serverECDH.getPublicKey('base64') }));
             clientWs._serverECDH = serverECDH;
-            connectToGateway();
+            
+            connectSharedGateway();
+            
+            // Send pending messages once gateway connects
+            if (sharedGwConnected) {
+              for (const pm of clientWs._pendingMessages) {
+                sharedSendToGateway(pm.text, pm.attachments);
+              }
+              clientWs._pendingMessages = [];
+            }
           } else {
             auditLog('ws_auth_fail', { ip: clientIp, visitorId });
             clientWs.send(JSON.stringify({ type: 'auth_fail' }));
@@ -502,36 +523,33 @@ export function setupWebSocket(server) {
           return;
         }
 
-        // E2E key exchange: client sends their public key
+        // ── E2E Key Exchange ──
         if (msg.type === 'e2e_key' && msg.clientPublicKey && clientWs._serverECDH) {
           try {
-            console.log(`[${visitorId}] E2E key exchange starting`);
             const clientPubBuf = Buffer.from(msg.clientPublicKey, 'base64');
             const sharedSecret = clientWs._serverECDH.computeSecret(clientPubBuf);
-            // HKDF to derive AES-256 key
-            e2eKey = crypto.hkdfSync('sha256', sharedSecret, 'clawtime-e2e-salt', 'clawtime-e2e-key', 32);
-            e2eKey = Buffer.from(e2eKey);
+            e2eKey = Buffer.from(crypto.hkdfSync('sha256', sharedSecret, 'clawtime-e2e-salt', 'clawtime-e2e-key', 32));
             e2eReady = true;
             delete clientWs._serverECDH;
             auditLog('e2e_established', { visitorId });
-            console.log(`[${visitorId}] E2E ready, sending e2e_ready`);
             secureSend(JSON.stringify({ type: 'e2e_ready' }));
             
-            // Send avatar state based on pending operations
-            // If there are pending runIds, show working/thinking state
-            if (webchatRunIds.size > 0 || clientWs.toolUseRunIds?.size > 0) {
-              const avatarState = clientWs.toolUseRunIds?.size > 0 ? 'working' : 'thinking';
-              console.log(`[${visitorId}] Restoring avatar state: ${avatarState} (${webchatRunIds.size} pending)`);
-              secureSend(JSON.stringify({ type: 'avatar_state', state: avatarState }));
+            // Send connected status if gateway is already connected
+            if (sharedGwConnected) {
+              secureSend(JSON.stringify({ type: 'connected', avatarState: sharedAvatarState }));
             }
             
-            // Flush any pending outbound messages
+            // Send current avatar state if there are pending operations
+            if (sharedRunIds.size > 0) {
+              secureSend(JSON.stringify({ type: 'avatar_state', state: sharedAvatarState }));
+            }
+            
             for (const pending of e2ePendingOutbound) {
               secureSend(pending);
             }
             e2ePendingOutbound = [];
           } catch (err) {
-            console.error(`[${visitorId}] E2E key exchange failed:`, err.message);
+            console.error(`[${visitorId}] E2E failed:`, err.message);
             clientWs.send(JSON.stringify({ type: 'e2e_error', error: 'Key exchange failed' }));
           }
           return;
@@ -542,34 +560,30 @@ export function setupWebSocket(server) {
           return;
         }
 
+        // ── Send Message ──
         if (msg.type === 'send' && msg.text) {
-          console.log(`[${visitorId}] Received message: ${msg.text.slice(0, 50)}...`);
-          // Save user message to local store
           saveMessage({ role: 'user', text: msg.text });
-          if (connected && gwWs?.readyState === WebSocket.OPEN) {
-            console.log(`[${visitorId}] Forwarding to gateway`);
-            sendToGateway(msg.text);
+          broadcastExcept({ type: 'user_message', text: msg.text }, clientWs);
+          
+          // Set avatar to thinking when user sends a message
+          sharedAvatarState = 'thinking';
+          sharedAwaitingResponse++;
+          broadcast({ type: 'avatar_state', state: 'thinking' });
+          
+          if (sharedGwConnected) {
+            sharedSendToGateway(msg.text);
           } else {
-            console.log(`[${visitorId}] Gateway not ready, queuing message`);
-            pendingMessages.push({ text: msg.text });
+            clientWs._pendingMessages.push({ text: msg.text });
           }
         }
 
+        // ── Get History ──
         if (msg.type === 'get_history') {
-          // Serve history from local webchat-only store (no gateway needed)
           const messages = getMessages(200);
           secureSend(JSON.stringify({ type: 'history', messages }));
         }
 
-        // Track avatar state for accurate reconnect
-        if (msg.type === 'avatar_state' && msg.state) {
-          currentAvatarState = msg.state;
-        }
-
-        // ── Image upload: save to disk, forward to gateway with attachment + URL ──
-        // DECISION: We include the image URL in the message text (e.g., [Image: /media/...])
-        // so the bot can reference and echo the image back in its response. The base64
-        // attachment gives the LLM vision access; the URL lets it link back in markdown.
+        // ── Image Upload ──
         if (msg.type === 'image' && msg.data) {
           try {
             const base64data = msg.data;
@@ -578,25 +592,17 @@ export function setupWebSocket(server) {
             const imgFile = path.join(MEDIA_DIR, `img-${imgId}.jpg`);
             fs.writeFileSync(imgFile, Buffer.from(base64data, 'base64'));
 
-            const attachments = [{
-              type: 'image',
-              mimeType: 'image/jpeg',
-              fileName: `photo-${imgId}.jpg`,
-              content: base64data,
-            }];
-
+            const attachments = [{ type: 'image', mimeType: 'image/jpeg', fileName: `photo-${imgId}.jpg`, content: base64data }];
             const mediaUrl = `/media/img-${imgId}.jpg`;
             const msgText = caption ? `${caption}\n[Image: ${mediaUrl}]` : `Image attached\n[Image: ${mediaUrl}]`;
 
-            // Save image message to local store
             saveMessage({ role: 'user', text: msgText, images: [mediaUrl] });
 
-            if (connected && gwWs?.readyState === WebSocket.OPEN) {
-              sendToGateway(msgText, attachments);
+            if (sharedGwConnected) {
+              sharedSendToGateway(msgText, attachments);
             } else {
-              pendingMessages.push({ text: msgText, attachments });
+              clientWs._pendingMessages.push({ text: msgText, attachments });
             }
-
             secureSend(JSON.stringify({ type: 'image_sent' }));
           } catch (err) {
             console.error(`[${visitorId}] Image error:`, err.message);
@@ -604,7 +610,7 @@ export function setupWebSocket(server) {
           }
         }
 
-        // Multi-attachment support (any file type)
+        // ── Multi-attachment Upload ──
         if (msg.type === 'attachments' && msg.attachments && Array.isArray(msg.attachments)) {
           try {
             const caption = msg.caption || '';
@@ -621,31 +627,24 @@ export function setupWebSocket(server) {
 
               const mediaUrl = `/media/${fileName}`;
               mediaUrls.push(`[${att.name || 'Attachment'}: ${mediaUrl}]`);
-              
-              if (att.type && att.type.startsWith('image/')) {
-                imageUrls.push(mediaUrl);
-              }
+              if (att.type?.startsWith('image/')) imageUrls.push(mediaUrl);
 
               attachments.push({
-                type: att.type && att.type.startsWith('image/') ? 'image' : 'file',
+                type: att.type?.startsWith('image/') ? 'image' : 'file',
                 mimeType: att.type || 'application/octet-stream',
                 fileName: att.name || fileName,
                 content: att.data,
               });
             }
 
-            const msgText = caption 
-              ? `${caption}\n${mediaUrls.join('\n')}`
-              : `${msg.attachments.length} attachment(s)\n${mediaUrls.join('\n')}`;
-
+            const msgText = caption ? `${caption}\n${mediaUrls.join('\n')}` : `${msg.attachments.length} attachment(s)\n${mediaUrls.join('\n')}`;
             saveMessage({ role: 'user', text: msgText, images: imageUrls.length > 0 ? imageUrls : undefined });
 
-            if (connected && gwWs?.readyState === WebSocket.OPEN) {
-              sendToGateway(msgText, attachments);
+            if (sharedGwConnected) {
+              sharedSendToGateway(msgText, attachments);
             } else {
-              pendingMessages.push({ text: msgText, attachments });
+              clientWs._pendingMessages.push({ text: msgText, attachments });
             }
-
             secureSend(JSON.stringify({ type: 'attachments_sent', count: msg.attachments.length }));
           } catch (err) {
             console.error(`[${visitorId}] Attachments error:`, err.message);
@@ -653,11 +652,10 @@ export function setupWebSocket(server) {
           }
         }
 
-        // Encrypted resource fetch — client requests static files through E2E WS
+        // ── Encrypted Resource Fetch ──
         if (msg.type === 'fetch_resource' && msg.url) {
           try {
             const urlPath = msg.url.split('?')[0];
-            // Resolve from public dir, media dir, or custom (data) dir
             let resolved;
             if (urlPath.startsWith('/media/')) {
               resolved = path.resolve(path.join(MEDIA_DIR, path.basename(urlPath)));
@@ -697,79 +695,72 @@ export function setupWebSocket(server) {
           return;
         }
 
-        // Barge-in: client interrupted TTS, suppress further TTS for this run
+        // ── Barge-in (TTS interruption) ──
         if (msg.type === 'barge_in' && msg.runId) {
-          ttsSuppressedRuns.add(msg.runId);
-          deltaTextByRun.delete(msg.runId);
-          deltaTextByRun.delete(msg.runId + '_spoken');
+          clientWs._ttsSuppressedRuns.add(msg.runId);
           return;
         }
 
-        // Heartbeat ping/pong
+        // ── Heartbeat ──
         if (msg.type === 'ping') {
           secureSend(JSON.stringify({ type: 'pong' }));
           return;
         }
 
-        // Voice mode toggle
+        // ── Voice Mode Toggle ──
         if (msg.type === 'voice_mode') {
-          voiceMode = !!msg.enabled;
-          console.log(`[${visitorId}] Voice mode: ${voiceMode}`);
+          clientWs._voiceMode = !!msg.enabled;
           return;
         }
 
-        // Handle widget responses from client
+        // ── Avatar State Sync ──
+        if (msg.type === 'avatar_state' && msg.state) {
+          sharedAvatarState = msg.state;
+          broadcastExcept({ type: 'avatar_state', state: msg.state }, clientWs);
+          return;
+        }
+
+        // ── Widget Response ──
         if (msg.type === 'widget_response') {
           const { id, widget, value, action } = msg;
-          // Save response to widget in history
           saveWidgetResponse(id, { value, action });
-          // Format as JSON that the agent can parse
           const widgetResponse = `[WIDGET_RESPONSE:${JSON.stringify({ id, widget, value, action })}]`;
-          if (connected && gwWs?.readyState === WebSocket.OPEN) {
-            sendToGateway(widgetResponse);
+          if (sharedGwConnected) {
+            sharedSendToGateway(widgetResponse);
           }
           return;
         }
 
-        // Forward reverify result to gateway as a chat message
+        // ── Reverify Result ──
         if (msg.type === 'reverify_result') {
-          const resultText = msg.verified
-            ? '[REVERIFY:OK:' + (msg.requestId || '') + ']'
-            : '[REVERIFY:FAIL:' + (msg.requestId || '') + ']';
-          if (connected && gwWs?.readyState === WebSocket.OPEN) {
-            sendToGateway(resultText);
+          const resultText = msg.verified ? `[REVERIFY:OK:${msg.requestId || ''}]` : `[REVERIFY:FAIL:${msg.requestId || ''}]`;
+          if (sharedGwConnected) {
+            sharedSendToGateway(resultText);
           }
           return;
         }
 
+        // ── Audio (STT) ──
         if (msg.type === 'audio' && msg.data) {
           try {
             const audioBuffer = Buffer.from(msg.data, 'base64');
             const transcription = await transcribeAudio(audioBuffer);
 
-            // Filter out blank/empty/noise transcriptions from Whisper
             const trimmed = (transcription || '').trim();
-            const isNoise = /^\(.*\)$/.test(trimmed) || /^\[.*\]$/.test(trimmed); // (sniffing), [MUSIC], etc.
+            const isNoise = /^\(.*\)$/.test(trimmed) || /^\[.*\]$/.test(trimmed);
             const isBlank = !transcription || isNoise || trimmed.length < 2;
 
-            secureSend(JSON.stringify({
-              type: 'transcription',
-              text: isBlank ? '' : transcription,
-            }));
+            secureSend(JSON.stringify({ type: 'transcription', text: isBlank ? '' : transcription }));
 
             if (!isBlank) {
-              // Save transcribed voice message to local store
               saveMessage({ role: 'user', text: transcription });
-              if (connected && gwWs?.readyState === WebSocket.OPEN) {
-                sendToGateway(transcription);
+              if (sharedGwConnected) {
+                sharedSendToGateway(transcription);
               }
             }
           } catch (err) {
             console.error(`[${visitorId}] STT error:`, err.message);
-            secureSend(JSON.stringify({
-              type: 'stt_error',
-              error: 'Failed to transcribe audio',
-            }));
+            secureSend(JSON.stringify({ type: 'stt_error', error: 'Failed to transcribe audio' }));
           }
         }
       } catch (e) {
@@ -778,19 +769,9 @@ export function setupWebSocket(server) {
     });
 
     clientWs.on('close', () => {
-      console.log(`[${visitorId}] Client disconnected`);
+      sharedClients.delete(clientWs);
       clearInterval(pingInterval);
       auditLog('ws_close', { visitorId });
-      // Keep gateway connection open briefly to receive any pending responses
-      // This prevents message loss when client disconnects mid-response
-      if (gwWs) {
-        setTimeout(() => {
-          if (gwWs && gwWs.readyState === WebSocket.OPEN) {
-            console.log(`[${visitorId}] Closing gateway connection after grace period`);
-            gwWs.close();
-          }
-        }, 10000); // 10 second grace period
-      }
     });
   });
 

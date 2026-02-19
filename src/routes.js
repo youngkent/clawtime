@@ -74,8 +74,8 @@ function getAvatarFromQuery(url) {
 }
 
 function serveStatic(req, res) {
-  let urlPath = req.url.split('?')[0];
-  let fileName = urlPath === '/' ? '/index.html' : urlPath;
+  const urlPath = req.url.split('?')[0];
+  const fileName = urlPath === '/' ? '/index.html' : urlPath;
   
   const ext = path.extname(fileName);
   const mime = MIME[ext] || 'application/octet-stream';
@@ -83,7 +83,7 @@ function serveStatic(req, res) {
   const sendFile = (filePath) => {
     fs.readFile(filePath, (err, data) => {
       if (err) { res.writeHead(404); res.end('Not found'); return; }
-      var headers = { 'Content-Type': mime };
+      const headers = { 'Content-Type': mime };
       if (['.html', '.js', '.css'].includes(ext)) {
         headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
         headers['Pragma'] = 'no-cache';
@@ -245,35 +245,20 @@ export async function handleRequest(req, res) {
       const defaultMeta = { name: 'Avatar', emoji: '🎭', description: 'Custom avatar', color: '8b5cf6' };
       const avatars = [];
 
-      // Scan OSS avatars (public/avatars/)
-      const ossDir = path.join(PUBLIC_DIR, 'avatars');
+      // Scan avatars from ~/.clawtime/avatars/ only
+      // (public/avatars/ contains examples that are copied on first run)
+      const avatarsDir = path.join(DATA_DIR, 'avatars');
       try {
-        const ossFiles = fs.readdirSync(ossDir);
-        ossFiles.forEach(file => {
-          if (file.endsWith('.js')) {
-            const id = file.replace('.js', '');
-            const filePath = path.join(ossDir, file);
-            const meta = parseAvatarMeta(filePath) || { ...defaultMeta, name: id };
-            avatars.push({ id, ...meta, custom: false });
-          }
-        });
-      } catch (e) { /* no OSS avatars directory */ }
-
-      // Scan custom avatars directory (~/.clawtime/avatars/)
-      const customDir = path.join(DATA_DIR, 'avatars');
-      try {
-        const files = fs.readdirSync(customDir);
+        const files = fs.readdirSync(avatarsDir);
         files.forEach(file => {
           if (file.endsWith('.js')) {
             const id = file.replace('.js', '');
-            // Skip if already added from OSS
-            if (avatars.some(a => a.id === id)) return;
-            const filePath = path.join(customDir, file);
+            const filePath = path.join(avatarsDir, file);
             const meta = parseAvatarMeta(filePath) || { ...defaultMeta, name: id };
-            avatars.push({ id, ...meta, custom: true });
+            avatars.push({ id, ...meta });
           }
         });
-      } catch (e) { /* no custom avatars directory */ }
+      } catch (e) { /* no avatars directory */ }
 
       return json(200, { avatars });
     }

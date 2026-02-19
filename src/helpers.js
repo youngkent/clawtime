@@ -63,6 +63,14 @@ export const MIME = {
  */
 export function ipMatches(sessIp, connIp) {
   if (sessIp === connIp) return true;
+  
+  // Normalize localhost variants
+  const localhosts = ['127.0.0.1', '::1', '::ffff:127.0.0.1', 'localhost'];
+  const sessLocal = localhosts.some(l => sessIp?.includes(l));
+  const connLocal = localhosts.some(l => connIp?.includes(l));
+  if (sessLocal && connLocal) return true;
+  
+  // IPv6 prefix matching (first 4 segments)
   if (sessIp?.includes(':') && connIp?.includes(':')) {
     const sessPrefix = sessIp.split(':').slice(0, 4).join(':');
     const connPrefix = connIp.split(':').slice(0, 4).join(':');

@@ -77,8 +77,8 @@ fetch('/api/avatar/current').then(function(r){return r.json()}).then(function(t)
       <div id="avatarList" style="margin-bottom:16px; display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:12px;"></div>
       <div style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
         <button id="selectAvatarBtn" style="background:var(--accent); display:none;">✓ Use This Avatar</button>
-        <button id="deleteAvatarBtn" style="background:#ef4444; display:none;">🗑 Delete</button>
         <button id="avatarManagerClose" style="background:var(--surface2); border:1px solid var(--border);">Close</button>
+        <button id="deleteAvatarBtn" style="background:#ef4444; display:none;">🗑 Delete</button>
       </div>
       <p class="desc" style="margin-top:12px; font-size:0.75rem;">To create a new avatar, type "create avatar" in the chat.</p>
     </div>
@@ -200,7 +200,7 @@ fetch('/api/avatar/current').then(function(r){return r.json()}).then(function(t)
       });
     }
   </script>
-  <script src="/app.js?v=20260217a"></script>
+  <script src="/app.js?v=20260219b"></script>
 
   <!-- 3D Avatar (Three.js) -->
   <script src="/avatar.js?v=20260207r"></script>

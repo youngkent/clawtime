@@ -39,6 +39,17 @@ const CREDENTIALS_FILE = path.join(DATA_DIR, 'credentials.json');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, 'avatars'), { recursive: true });
 
+// Copy default avatar(s) from public/avatars/ to ~/.clawtime/avatars/ if not present
+const defaultAvatars = ['lobster'];
+for (const avatar of defaultAvatars) {
+  const src = path.join(PUBLIC_DIR, 'avatars', avatar + '.js');
+  const dst = path.join(DATA_DIR, 'avatars', avatar + '.js');
+  if (fs.existsSync(src) && !fs.existsSync(dst)) {
+    fs.copyFileSync(src, dst);
+    console.log(`[ClawTime] Copied default avatar: ${avatar}`);
+  }
+}
+
 // Initialize default .env if it doesn't exist
 const envPath = path.join(DATA_DIR, '.env');
 if (!fs.existsSync(envPath)) {

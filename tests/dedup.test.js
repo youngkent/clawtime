@@ -1,55 +1,38 @@
 /**
- * Message deduplication tests - client-side logic
+ * Message deduplication tests - runId-based (no prefix/length detection)
  */
 
 describe('Message Deduplication', () => {
-  // Simulate botMessagesByRunId Map behavior
   let botMessagesByRunId;
   
   beforeEach(() => {
     botMessagesByRunId = new Map();
   });
   
-  // Helper to simulate the dedup logic from app.js
+  // Simple runId-based logic: same runId = same message
   function processMessage(state, runId, text) {
     const existing = botMessagesByRunId.get(runId);
     
     if (state === 'delta') {
-      if (existing) {
-        if (existing.finalized) {
-          // Check if duplicate
-          if (text === existing.text || text.length <= existing.maxTextLen) {
-            return { action: 'ignored', reason: 'duplicate delta for finalized' };
-          }
-          // New content reusing runId
-          botMessagesByRunId.set(runId, { text, runId, finalized: false, maxTextLen: text.length });
-          return { action: 'new_bubble', reason: 'new content reusing runId' };
-        } else {
-          // Update existing - allow small fluctuations (within 5 chars)
-          if (text.length >= existing.maxTextLen - 5) {
-            existing.text = text;
-            existing.maxTextLen = Math.max(existing.maxTextLen, text.length);
-            return { action: 'updated', reason: 'longer text' };
-          }
-          return { action: 'ignored', reason: 'shorter text' };
-        }
+      if (existing && !existing.finalized) {
+        // Same runId, update content
+        existing.text = text;
+        return { action: 'updated' };
       } else {
-        // New message
-        botMessagesByRunId.set(runId, { text, runId, finalized: false, maxTextLen: text.length });
-        return { action: 'new_bubble', reason: 'new runId' };
+        // New runId or finalized — create new
+        botMessagesByRunId.set(runId, { text, runId, finalized: false });
+        return { action: 'new_bubble' };
       }
     } else if (state === 'final') {
-      if (existing && existing.finalized) {
-        return { action: 'ignored', reason: 'duplicate final' };
-      } else if (existing && !existing.finalized) {
+      if (existing && !existing.finalized) {
         existing.text = text;
-        existing.maxTextLen = text.length;
         existing.finalized = true;
-        return { action: 'finalized', reason: 'updated and finalized' };
-      } else {
-        botMessagesByRunId.set(runId, { text, runId, finalized: true, maxTextLen: text.length });
-        return { action: 'new_bubble', reason: 'new final message' };
+        return { action: 'finalized' };
+      } else if (!existing) {
+        botMessagesByRunId.set(runId, { text, runId, finalized: true });
+        return { action: 'new_bubble' };
       }
+      return { action: 'ignored' };
     }
   }
   
@@ -60,39 +43,31 @@ describe('Message Deduplication', () => {
       expect(botMessagesByRunId.has('run-1')).toBe(true);
     });
     
-    test('should update existing bubble with longer text', () => {
+    test('should update existing bubble for same runId', () => {
       processMessage('delta', 'run-1', 'Hello');
       const result = processMessage('delta', 'run-1', 'Hello world');
       expect(result.action).toBe('updated');
       expect(botMessagesByRunId.get('run-1').text).toBe('Hello world');
     });
     
-    test('should ignore shorter text (cumulative delta protection)', () => {
+    test('should always use latest text for same runId', () => {
       processMessage('delta', 'run-1', 'Hello world');
-      const result = processMessage('delta', 'run-1', 'Hello');
-      expect(result.action).toBe('ignored');
-      expect(botMessagesByRunId.get('run-1').text).toBe('Hello world');
+      processMessage('delta', 'run-1', 'Hi'); // shorter, but should still update
+      expect(botMessagesByRunId.get('run-1').text).toBe('Hi');
     });
     
-    test('should allow small fluctuations (within 10 chars)', () => {
-      processMessage('delta', 'run-1', 'Hello world!!!');
-      const result = processMessage('delta', 'run-1', 'Hello world');
-      expect(result.action).toBe('updated');
-    });
-    
-    test('should ignore duplicate delta for finalized runId', () => {
-      processMessage('delta', 'run-1', 'Hello');
-      processMessage('final', 'run-1', 'Hello world');
-      const result = processMessage('delta', 'run-1', 'Hello world');
-      expect(result.action).toBe('ignored');
-      expect(result.reason).toBe('duplicate delta for finalized');
+    test('should create new bubble after runId finalized', () => {
+      processMessage('delta', 'run-1', 'First');
+      processMessage('final', 'run-1', 'First done');
+      const result = processMessage('delta', 'run-1', 'Second');
+      expect(result.action).toBe('new_bubble');
     });
   });
   
   describe('Final messages', () => {
     test('should finalize existing delta', () => {
       processMessage('delta', 'run-1', 'Hello');
-      const result = processMessage('final', 'run-1', 'Hello world - done');
+      const result = processMessage('final', 'run-1', 'Hello world');
       expect(result.action).toBe('finalized');
       expect(botMessagesByRunId.get('run-1').finalized).toBe(true);
     });
@@ -103,16 +78,9 @@ describe('Message Deduplication', () => {
       expect(botMessagesByRunId.get('run-1').finalized).toBe(true);
     });
     
-    test('should ignore duplicate final message', () => {
-      processMessage('final', 'run-1', 'Hello world');
-      const result = processMessage('final', 'run-1', 'Hello world');
-      expect(result.action).toBe('ignored');
-      expect(result.reason).toBe('duplicate final');
-    });
-    
-    test('should ignore duplicate final even with different text', () => {
-      processMessage('final', 'run-1', 'First response');
-      const result = processMessage('final', 'run-1', 'Different text');
+    test('should ignore final for already finalized runId', () => {
+      processMessage('final', 'run-1', 'Done');
+      const result = processMessage('final', 'run-1', 'Done again');
       expect(result.action).toBe('ignored');
     });
   });
@@ -124,23 +92,21 @@ describe('Message Deduplication', () => {
       processMessage('delta', 'run-3', 'Message 3');
       
       expect(botMessagesByRunId.size).toBe(3);
-      expect(botMessagesByRunId.get('run-2').text).toBe('Message 2');
     });
     
-    test('should finalize runIds independently', () => {
-      processMessage('delta', 'run-1', 'Msg 1');
-      processMessage('delta', 'run-2', 'Msg 2');
-      processMessage('final', 'run-1', 'Msg 1 final');
+    test('should update correct runId independently', () => {
+      processMessage('delta', 'run-1', 'A');
+      processMessage('delta', 'run-2', 'B');
+      processMessage('delta', 'run-1', 'A updated');
       
-      expect(botMessagesByRunId.get('run-1').finalized).toBe(true);
-      expect(botMessagesByRunId.get('run-2').finalized).toBe(false);
+      expect(botMessagesByRunId.get('run-1').text).toBe('A updated');
+      expect(botMessagesByRunId.get('run-2').text).toBe('B');
     });
   });
 });
 
 describe('Widget Deduplication', () => {
   test('should detect existing widget by ID', () => {
-    // Simulate DOM check
     const renderedWidgets = new Set(['widget-123', 'widget-456']);
     
     function shouldRenderWidget(widgetId) {

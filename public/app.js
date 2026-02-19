@@ -5,7 +5,7 @@
 })();
 
 // ─── Config (loaded from server) ───
-var CFG = {
+const CFG = {
   botName: 'ClawTime',
   botEmoji: null,  // Set from avatar theme
   botTagline: 'Your AI assistant. Type a message to start chatting.',
@@ -16,18 +16,18 @@ var CFG = {
 // Load config from server before anything else
 async function loadConfig() {
   try {
-    var res = await fetch('/api/config');
-    var data = await res.json();
+    const res = await fetch('/api/config');
+    const data = await res.json();
     Object.assign(CFG, data);
   } catch (e) {
     // Use defaults
   }
   
   // Apply avatar theme (from pre-fetch or fetch now)
-  var theme = window.CLAWTIME_THEME;
+  let theme = window.CLAWTIME_THEME;
   if (!theme) {
     try {
-      var r = await fetch('/api/avatar/current');
+      const r = await fetch('/api/avatar/current');
       theme = await r.json();
     } catch (e) {
       theme = { emoji: '🦞', color: 'f97316' };  // Fallback
@@ -44,12 +44,12 @@ function applyConfig() {
   document.title = CFG.botName;
 
   // Update theme accent color
-  var r = document.documentElement;
-  var hex = CFG.themeAccent;
+  const r = document.documentElement;
+  const hex = CFG.themeAccent;
   if (hex && /^[0-9a-fA-F]{6}$/.test(hex)) {
-    var rr = parseInt(hex.slice(0,2), 16);
-    var gg = parseInt(hex.slice(2,4), 16);
-    var bb = parseInt(hex.slice(4,6), 16);
+    const rr = parseInt(hex.slice(0,2), 16);
+    const gg = parseInt(hex.slice(2,4), 16);
+    const bb = parseInt(hex.slice(4,6), 16);
     r.style.setProperty('--accent', '#' + hex);
     r.style.setProperty('--accent-glow', 'rgba(' + rr + ',' + gg + ',' + bb + ',0.15)');
   }
@@ -69,13 +69,13 @@ function applyConfig() {
   }
 
   // Task button visibility
-  var taskBtn = document.getElementById('taskBtn');
-  var taskBtnHeader = document.getElementById('taskBtnHeader');
+  const taskBtn = document.getElementById('taskBtn');
+  const taskBtnHeader = document.getElementById('taskBtnHeader');
   if (taskBtn && !CFG.enableTasks) taskBtn.style.display = 'none';
   if (taskBtnHeader && !CFG.enableTasks) taskBtnHeader.style.display = 'none';
 
   // Voice button visibility
-  var voiceBtn = document.getElementById('callToggleBtn');
+  const voiceBtn = document.getElementById('callToggleBtn');
   if (voiceBtn && !CFG.enableVoice) voiceBtn.style.display = 'none';
 }
 
@@ -94,7 +94,7 @@ const sendBtn = document.getElementById('sendBtn');
 let ws = null;
 let connected = false;
 let typingEl = null;
-const botMessagesByRunId = new Map();
+// No local message cache - use DOM with data-msgid as source of truth
 let reconnectTimer = null;
 let sessionToken = null;
 let isRegistered = false;
@@ -107,8 +107,9 @@ let historyIndex = 0;
 let loadingMore = false;
 let historyLoaded = false;
 let pendingChatEvents = [];
-let deltaGapTimer = null;
+const deltaGapTimer = null;
 let activeRunning = false;
+const avatarIdleTimer = null;  // Track idle timeout for cancellation
 
 function showLoadMoreIndicator() {
   let indicator = document.getElementById('load-more');
@@ -123,12 +124,12 @@ function showLoadMoreIndicator() {
 }
 
 function removeLoadMoreIndicator() {
-  var indicator = document.getElementById('load-more');
+  const indicator = document.getElementById('load-more');
   if (indicator) indicator.remove();
 }
 
 function showLoadingIndicator() {
-  var el = document.getElementById('loading-indicator');
+  let el = document.getElementById('loading-indicator');
   if (!el) {
     el = document.createElement('div');
     el.id = 'loading-indicator';
@@ -139,7 +140,7 @@ function showLoadingIndicator() {
 }
 
 function removeLoadingIndicator() {
-  var el = document.getElementById('loading-indicator');
+  const el = document.getElementById('loading-indicator');
   if (el) el.remove();
 }
 
@@ -147,41 +148,43 @@ function loadOlderMessages() {
   if (loadingMore || historyIndex <= 0) return;
   loadingMore = true;
 
-  var newStart = Math.max(0, historyIndex - HISTORY_PAGE_SIZE);
+  const newStart = Math.max(0, historyIndex - HISTORY_PAGE_SIZE);
 
   // Remove indicators first and measure
   removeLoadMoreIndicator();
   removeLoadingIndicator();
 
   // Record current state
-  var prevScrollHeight = messagesEl.scrollHeight;
-  var prevScrollTop = messagesEl.scrollTop;
+  const prevScrollHeight = messagesEl.scrollHeight;
+  const prevScrollTop = messagesEl.scrollTop;
 
   // Temporarily prevent scroll events by setting overflow
-  var prevOverflow = messagesEl.style.overflow;
+  const prevOverflow = messagesEl.style.overflow;
   messagesEl.style.overflow = 'hidden';
 
   // Create a document fragment for batch DOM insertion
-  var fragment = document.createDocumentFragment();
-  var tempMessages = [];
+  const fragment = document.createDocumentFragment();
+  const tempMessages = [];
   
-  for (var i = newStart; i < historyIndex; i++) {
-    var m = historyMessages[i];
+  for (let i = newStart; i < historyIndex; i++) {
+    const m = historyMessages[i];
     if (m.widget) continue; // Skip widgets
     
-    var div = document.createElement('div');
+    const div = document.createElement('div');
     div.className = 'message ' + m.role;
     
-    var bubble = document.createElement('div');
+    const bubble = document.createElement('div');
     bubble.className = 'bubble ' + m.role;
     
     if (m.images && m.images.length > 0) {
-      var img = document.createElement('img');
-      img.className = 'msg-image';
-      img.src = m.images[0];
-      bubble.appendChild(img);
+      m.images.forEach(function(imgSrc) {
+        const img = document.createElement('img');
+        img.className = 'msg-image';
+        img.src = imgSrc;
+        bubble.appendChild(img);
+      });
       if (m.text) {
-        var textDiv = document.createElement('div');
+        const textDiv = document.createElement('div');
         textDiv.innerHTML = renderMarkdown(m.text);
         bubble.appendChild(textDiv);
       }
@@ -194,16 +197,16 @@ function loadOlderMessages() {
   }
   
   // Insert all at once at the beginning
-  var firstChild = messagesEl.firstChild;
-  for (var j = tempMessages.length - 1; j >= 0; j--) {
+  const firstChild = messagesEl.firstChild;
+  for (let j = tempMessages.length - 1; j >= 0; j--) {
     messagesEl.insertBefore(tempMessages[j], firstChild);
   }
 
   historyIndex = newStart;
 
   // Calculate new scroll position to maintain view
-  var newScrollHeight = messagesEl.scrollHeight;
-  var heightAdded = newScrollHeight - prevScrollHeight;
+  const newScrollHeight = messagesEl.scrollHeight;
+  const heightAdded = newScrollHeight - prevScrollHeight;
   
   // Set scroll position before re-enabling overflow
   messagesEl.scrollTop = prevScrollTop + heightAdded;
@@ -221,29 +224,26 @@ function loadOlderMessages() {
 
 // ─── Send Button State ───
 function updateSendBtn() {
-  var hasContent = !!(inputEl.value.trim() || pendingAttachments.length > 0);
+  const hasContent = !!(inputEl.value.trim() || pendingAttachments.length > 0);
   sendBtn.disabled = !hasContent || !connected;
 }
 
 // ─── Initialize ───
 async function init() {
-  console.log('[Auth] init() starting');
   await loadConfig();
-  console.log('[Auth] loadConfig done');
 
   // Token-based auth for automated testing
-  var urlParams = new URLSearchParams(window.location.search);
-  var testToken = urlParams.get('token');
+  const urlParams = new URLSearchParams(window.location.search);
+  const testToken = urlParams.get('token');
   if (testToken) {
     try {
-      var tokenRes = await fetch('/auth/token', {
+      const tokenRes = await fetch('/auth/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: testToken })
       });
-      var tokenData = await tokenRes.json();
+      const tokenData = await tokenRes.json();
       if (tokenData.valid) {
-        console.log('[Auth] Token auth successful');
         sessionToken = tokenData.sessionToken;
         localStorage.setItem('clawtime_session', sessionToken);
         enterChat();
@@ -255,15 +255,13 @@ async function init() {
   }
 
   sessionToken = localStorage.getItem('clawtime_session');
-  console.log('[Auth] checking /auth/status');
 
   try {
-    var controller = new AbortController();
-    var timeoutId = setTimeout(function() { controller.abort(); }, 5000);
-    var res = await fetch('/auth/status?_=' + Date.now(), { signal: controller.signal, cache: 'no-store' });
-    console.log('[Auth] /auth/status response:', res.status);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(function() { controller.abort(); }, 5000);
+    const res = await fetch('/auth/status?_=' + Date.now(), { signal: controller.signal, cache: 'no-store' });
     clearTimeout(timeoutId);
-    var data = await res.json();
+    const data = await res.json();
     isRegistered = data.registered;
   } catch (e) {
     authError.textContent = e.name === 'AbortError' ? 'Auth check timed out — try hard refresh (Cmd+Shift+R)' : 'Failed to check auth status';
@@ -272,9 +270,9 @@ async function init() {
 
   if (sessionToken) {
     try {
-      var controller2 = new AbortController();
-      var timeoutId2 = setTimeout(function() { controller2.abort(); }, 5000);
-      var res = await fetch('/auth/session?_=' + Date.now(), {
+      const controller2 = new AbortController();
+      const timeoutId2 = setTimeout(function() { controller2.abort(); }, 5000);
+      const res = await fetch('/auth/session?_=' + Date.now(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: sessionToken }),
@@ -282,12 +280,12 @@ async function init() {
         cache: 'no-store',
       });
       clearTimeout(timeoutId2);
-      var data = await res.json();
+      const data = await res.json();
       if (data.valid) {
         enterChat();
         return;
       }
-    } catch {}
+    } catch { /* ignore */ }
     localStorage.removeItem('clawtime_session');
     sessionToken = null;
   }
@@ -299,8 +297,8 @@ async function init() {
     return;
   } else {
     // Check for setup token in URL
-    var urlParams = new URLSearchParams(window.location.search);
-    var setupToken = urlParams.get('setup');
+    const urlParams = new URLSearchParams(window.location.search);
+    const setupToken = urlParams.get('setup');
     if (setupToken) {
       window._setupToken = setupToken;
       authLabel.textContent = 'Set up your passkey to get started';
@@ -308,7 +306,7 @@ async function init() {
     } else {
       authLabel.textContent = 'Enter setup token to register';
       // Show token input
-      var tokenInput = document.createElement('input');
+      const tokenInput = document.createElement('input');
       tokenInput.type = 'text';
       tokenInput.placeholder = 'Setup token';
       tokenInput.id = 'setupTokenInput';
@@ -330,8 +328,8 @@ async function init() {
 
 // ─── Friendly WebAuthn error messages ───
 function getPasskeyErrorMessage(err, isLogin) {
-  var name = err.name || '';
-  var msg = err.message || '';
+  const name = err.name || '';
+  const msg = err.message || '';
   
   // User cancelled
   if (name === 'NotAllowedError') {
@@ -373,22 +371,22 @@ async function doRegister() {
   authError.textContent = '';
 
   try {
-    var optRes = await fetch('/auth/register-options', {
+    const optRes = await fetch('/auth/register-options', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ setupToken: window._setupToken || undefined }),
     });
-    var optData = await optRes.json();
+    const optData = await optRes.json();
     if (optData.error) throw new Error(optData.error);
-    var { options, challengeId } = optData;
-    var attResp = await startRegistration({ optionsJSON: options });
+    const { options, challengeId } = optData;
+    const attResp = await startRegistration({ optionsJSON: options });
 
-    var verRes = await fetch('/auth/register-verify', {
+    const verRes = await fetch('/auth/register-verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ challengeId, response: attResp }),
     });
-    var verData = await verRes.json();
+    const verData = await verRes.json();
 
     if (verData.verified && verData.token) {
       sessionToken = verData.token;
@@ -399,7 +397,6 @@ async function doRegister() {
       authBtn.disabled = false;
     }
   } catch (err) {
-    console.log('[Auth] Registration error:', err.name, err.message);
     authError.textContent = getPasskeyErrorMessage(err, false);
     authBtn.disabled = false;
   }
@@ -411,7 +408,7 @@ async function doLogin() {
   authError.textContent = '';
 
   try {
-    var optRes = await fetch('/auth/login-options', {
+    const optRes = await fetch('/auth/login-options', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
@@ -419,10 +416,9 @@ async function doLogin() {
     if (!optRes.ok) {
       throw new Error('Login options failed: ' + optRes.status);
     }
-    var optData = await optRes.json();
-    console.log('[Auth] Login options:', optData);
-    var options = optData.options;
-    var challengeId = optData.challengeId;
+    const optData = await optRes.json();
+    const options = optData.options;
+    const challengeId = optData.challengeId;
     if (!options) {
       throw new Error('Invalid login options received');
     }
@@ -431,27 +427,24 @@ async function doLogin() {
       authBtn.disabled = false;
       return;
     }
-    var authResp = await startAuthentication({ optionsJSON: options });
+    const authResp = await startAuthentication({ optionsJSON: options });
 
-    var verRes = await fetch('/auth/login-verify', {
+    const verRes = await fetch('/auth/login-verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ challengeId, response: authResp }),
     });
-    var verData = await verRes.json();
+    const verData = await verRes.json();
 
     if (verData.verified && verData.token) {
-      console.log('[Auth] Login verified, token received:', verData.token.slice(0, 8) + '...');
       sessionToken = verData.token;
       localStorage.setItem('clawtime_session', sessionToken);
       enterChat();
     } else {
-      console.log('[Auth] Login failed:', verData);
       authError.textContent = verData.error || 'Authentication failed';
       authBtn.disabled = false;
     }
   } catch (err) {
-    console.log('[Auth] Login error:', err.name, err.message);
     authError.textContent = getPasskeyErrorMessage(err, true);
     authBtn.disabled = false;
   }
@@ -463,7 +456,6 @@ authBtn.addEventListener('click', function() {
 
 // ─── Enter chat ───
 function enterChat() {
-  console.log('[Chat] enterChat called, sessionToken:', sessionToken?.slice(0, 8) + '...');
   authScreen.style.display = 'none';
   chatUi.classList.add('active');
   setStatus('connecting');
@@ -490,12 +482,12 @@ function setStatus(state) {
 // ─── Markdown Rendering ───
 function renderMarkdown(text) {
   if (!text) return '';
-  var s = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let s = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   // Extract code blocks first to protect them from other transformations
-  var codeBlocks = [];
+  const codeBlocks = [];
   s = s.replace(/```(\w*)\n([\s\S]*?)```/g, function(m, lang, code) {
-    var placeholder = '%%CODEBLOCK' + codeBlocks.length + '%%';
+    const placeholder = '%%CODEBLOCK' + codeBlocks.length + '%%';
     codeBlocks.push('<pre><code class="lang-' + lang + '">' + code.trim() + '</code></pre>');
     return placeholder;
   });
@@ -513,9 +505,9 @@ function renderMarkdown(text) {
   s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, function(m, alt, url) {
     // For self-hosted images (relative URLs or same origin), fetch through encrypted WS
     if (url.startsWith('/') || url.indexOf(location.host) !== -1) {
-      var relUrl = url.startsWith('/') ? url : new URL(url).pathname;
+      const relUrl = url.startsWith('/') ? url : new URL(url).pathname;
       // Check if we already have a blob URL cached for this resource
-      var cached = window._e2eBlobCache && window._e2eBlobCache[relUrl];
+      const cached = window._e2eBlobCache && window._e2eBlobCache[relUrl];
       if (cached) {
         return '<img src="' + cached + '" alt="' + alt + '" style="max-width:100%;border-radius:8px;margin:6px 0;display:block">';
       }
@@ -530,16 +522,16 @@ function renderMarkdown(text) {
     return '<img src="' + url + '" alt="' + alt + '" style="max-width:100%;border-radius:8px;margin:6px 0;display:block" loading="lazy">';
   });
   // Audio player for /tts/ links: [label](/tts/file.mp3) → audio player
-  s = s.replace(/\[([^\]]*)\]\((\/tts\/[^\)]+\.mp3)\)/g, '<div style="margin:6px 0"><div style="font-size:13px;margin-bottom:4px">$1</div><audio controls style="width:100%;height:36px" src="$2"></audio></div>');
+  s = s.replace(/\[([^\]]*)\]\((\/tts\/[^)]+\.mp3)\)/g, '<div style="margin:6px 0"><div style="font-size:13px;margin-bottom:4px">$1</div><audio controls style="width:100%;height:36px" src="$2"></audio></div>');
   s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function(m, label, url) {
-    var isFile = /\.(pdf|zip|doc|docx|xls|xlsx|csv|txt)(\?.*)?$/i.test(url);
+    const isFile = /\.(pdf|zip|doc|docx|xls|xlsx|csv|txt)(\?.*)?$/i.test(url);
     if (isFile) {
-      var fname = url.split('/').pop().split('?')[0];
+      const fname = url.split('/').pop().split('?')[0];
       return '<a href="' + url + '" onclick="event.preventDefault();window.openFileViewer(\'' + url + '\',\'' + fname + '\')" rel="noopener">' + label + '</a>';
     }
     return '<a href="' + url + '" target="_blank" rel="noopener">' + label + '</a>';
   });
-  s = s.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>');
+  s = s.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
   s = s.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
   s = s.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
   s = s.replace(/(?<!<\/ul>)((?:<li>.*<\/li>\n?)+)(?!<\/ul>)/g, function(m) {
@@ -565,18 +557,18 @@ function renderMarkdown(text) {
 }
 
 function setBubbleContent(bubble, text) {
-  var timeEl = bubble.querySelector('.msg-time');
-  var quoteEl = bubble.querySelector('.reply-quote');
+  const timeEl = bubble.querySelector('.msg-time');
+  const quoteEl = bubble.querySelector('.reply-quote');
   
   // Extract widgets from text
-  var extracted = extractWidgets(text);
+  const extracted = extractWidgets(text);
   text = extracted.text;
-  var widgets = extracted.widgets;
+  const widgets = extracted.widgets;
   
   bubble.innerHTML = '';
   bubble.dataset.rawText = text;
   if (quoteEl) bubble.appendChild(quoteEl);
-  var contentDiv = document.createElement('div');
+  const contentDiv = document.createElement('div');
   try {
     contentDiv.innerHTML = renderMarkdown(text);
   } catch (e) {
@@ -586,8 +578,8 @@ function setBubbleContent(bubble, text) {
   bubble.appendChild(contentDiv);
   
   // Render extracted widgets
-  for (var i = 0; i < widgets.length; i++) {
-    var widgetEl = renderWidget(widgets[i]);
+  for (let i = 0; i < widgets.length; i++) {
+    const widgetEl = renderWidget(widgets[i]);
     if (widgetEl) bubble.appendChild(widgetEl);
   }
   
@@ -595,19 +587,19 @@ function setBubbleContent(bubble, text) {
 }
 
 // ─── Message Context Menu & Reply ───
-var contextMenu = null;
-var replyTarget = null;
-var longPressTimer = null;
+let contextMenu = null;
+let replyTarget = null;
+let longPressTimer = null;
 
 function showContextMenu(x, y, bubbleEl, sender) {
   hideContextMenu();
-  var menu = document.createElement('div');
+  const menu = document.createElement('div');
   menu.className = 'msg-context-menu';
 
-  var copyBtn = document.createElement('button');
+  const copyBtn = document.createElement('button');
   copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Copy';
   copyBtn.onclick = function() {
-    var rawText = bubbleEl.dataset.rawText || bubbleEl.innerText.replace(/\d{2}:\d{2}\s*(AM|PM)?$/m, '').trim();
+    const rawText = bubbleEl.dataset.rawText || bubbleEl.innerText.replace(/\d{2}:\d{2}\s*(AM|PM)?$/m, '').trim();
     navigator.clipboard.writeText(rawText).then(function() {
       copyBtn.innerHTML = '✅ Copied!';
       setTimeout(hideContextMenu, 600);
@@ -615,10 +607,10 @@ function showContextMenu(x, y, bubbleEl, sender) {
   };
   menu.appendChild(copyBtn);
 
-  var replyBtn = document.createElement('button');
+  const replyBtn = document.createElement('button');
   replyBtn.innerHTML = '↩️ Reply';
   replyBtn.onclick = function() {
-    var rawText = bubbleEl.dataset.rawText || bubbleEl.innerText.replace(/\d{2}:\d{2}\s*(AM|PM)?$/m, '').trim();
+    const rawText = bubbleEl.dataset.rawText || bubbleEl.innerText.replace(/\d{2}:\d{2}\s*(AM|PM)?$/m, '').trim();
     setReplyTarget(sender, rawText, bubbleEl);
     hideContextMenu();
   };
@@ -627,9 +619,9 @@ function showContextMenu(x, y, bubbleEl, sender) {
   document.body.appendChild(menu);
   contextMenu = menu;
 
-  var rect = menu.getBoundingClientRect();
-  var mx = Math.min(x, window.innerWidth - rect.width - 10);
-  var my = Math.min(y, window.innerHeight - rect.height - 10);
+  const rect = menu.getBoundingClientRect();
+  const mx = Math.min(x, window.innerWidth - rect.width - 10);
+  const my = Math.min(y, window.innerHeight - rect.height - 10);
   menu.style.left = Math.max(5, mx) + 'px';
   menu.style.top = Math.max(5, my) + 'px';
 }
@@ -640,7 +632,7 @@ function hideContextMenu() {
 
 function setReplyTarget(sender, text, bubbleEl) {
   replyTarget = { sender: sender, text: text, bubbleEl: bubbleEl };
-  var replyBar = document.getElementById('replyBar');
+  const replyBar = document.getElementById('replyBar');
   document.getElementById('replyBarSender').textContent = sender === 'bot' ? CFG.botName : 'You';
   document.getElementById('replyBarText').textContent = text.length > 120 ? text.slice(0, 120) + '…' : text;
   replyBar.classList.add('active');
@@ -659,21 +651,21 @@ document.addEventListener('click', function(e) {
 });
 
 messagesEl.addEventListener('contextmenu', function(e) {
-  var bubble = e.target.closest('.bubble');
+  const bubble = e.target.closest('.bubble');
   if (!bubble) return;
   e.preventDefault();
-  var msg = bubble.closest('.message');
-  var sender = msg && msg.classList.contains('user') ? 'user' : 'bot';
+  const msg = bubble.closest('.message');
+  const sender = msg && msg.classList.contains('user') ? 'user' : 'bot';
   showContextMenu(e.clientX, e.clientY, bubble, sender);
 });
 
 messagesEl.addEventListener('touchstart', function(e) {
-  var bubble = e.target.closest('.bubble');
+  const bubble = e.target.closest('.bubble');
   if (!bubble) return;
   longPressTimer = setTimeout(function() {
-    var touch = e.touches[0];
-    var msg = bubble.closest('.message');
-    var sender = msg && msg.classList.contains('user') ? 'user' : 'bot';
+    const touch = e.touches[0];
+    const msg = bubble.closest('.message');
+    const sender = msg && msg.classList.contains('user') ? 'user' : 'bot';
     showContextMenu(touch.clientX, touch.clientY, bubble, sender);
   }, 500);
 }, { passive: true });
@@ -684,7 +676,7 @@ messagesEl.addEventListener('touchmove', function() { clearTimeout(longPressTime
 // ─── Chat Messages ───
 function formatTime(ts) {
   if (!ts) return '';
-  var d = new Date(ts);
+  const d = new Date(ts);
   if (isNaN(d.getTime())) return '';
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
@@ -692,8 +684,8 @@ function formatTime(ts) {
 // Extract [[WIDGET:{...}]] from text, return { text, widgets }
 function extractWidgets(text) {
   if (!text) return { text: text, widgets: [] };
-  var widgets = [];
-  var cleaned = text.replace(/\[\[WIDGET:([\s\S]*?)\]\]/g, function(match, json) {
+  const widgets = [];
+  const cleaned = text.replace(/\[\[WIDGET:([\s\S]*?)\]\]/g, function(match, json) {
     try {
       widgets.push(JSON.parse(json));
     } catch (e) {
@@ -706,35 +698,35 @@ function extractWidgets(text) {
 
 function addMessage(text, sender, opts) {
   opts = opts || {};
-  var welcome = messagesEl.querySelector('.welcome');
+  const welcome = messagesEl.querySelector('.welcome');
   if (welcome) welcome.remove();
 
   // Extract widgets from text (bot messages only)
-  var extractedWidgets = [];
+  let extractedWidgets = [];
   if (sender === 'bot') {
-    var extracted = extractWidgets(text);
+    const extracted = extractWidgets(text);
     text = extracted.text;
     extractedWidgets = extracted.widgets;
   }
 
-  var div = document.createElement('div');
+  const div = document.createElement('div');
   div.className = 'message ' + sender;
 
-  var avatar = document.createElement('div');
+  const avatar = document.createElement('div');
   avatar.className = 'msg-avatar';
   avatar.textContent = sender === 'bot' ? CFG.botEmoji : '👤';
 
-  var bubble = document.createElement('div');
+  const bubble = document.createElement('div');
   bubble.className = 'bubble';
   bubble.dataset.rawText = text;
 
   if (opts.replyTo) {
-    var quote = document.createElement('div');
+    const quote = document.createElement('div');
     quote.className = 'reply-quote';
-    var qs = document.createElement('div');
+    const qs = document.createElement('div');
     qs.className = 'reply-quote-sender';
     qs.textContent = opts.replyTo.sender === 'bot' ? CFG.botName : 'You';
-    var qt = document.createElement('div');
+    const qt = document.createElement('div');
     qt.className = 'reply-quote-text';
     qt.textContent = opts.replyTo.text.length > 80 ? opts.replyTo.text.slice(0, 80) + '…' : opts.replyTo.text;
     quote.appendChild(qs);
@@ -750,7 +742,7 @@ function addMessage(text, sender, opts) {
   }
 
   if (sender === 'bot') {
-    var contentDiv = document.createElement('div');
+    const contentDiv = document.createElement('div');
     contentDiv.innerHTML = renderMarkdown(text);
     bubble.appendChild(contentDiv);
   } else {
@@ -758,14 +750,14 @@ function addMessage(text, sender, opts) {
   }
 
   // Render extracted widgets inside the bubble
-  for (var i = 0; i < extractedWidgets.length; i++) {
-    var widgetEl = renderWidget(extractedWidgets[i]);
+  for (let i = 0; i < extractedWidgets.length; i++) {
+    const widgetEl = renderWidget(extractedWidgets[i]);
     if (widgetEl) bubble.appendChild(widgetEl);
   }
 
-  var timeStr = formatTime(opts.timestamp || Date.now());
+  const timeStr = formatTime(opts.timestamp || Date.now());
   if (timeStr) {
-    var timeEl = document.createElement('span');
+    const timeEl = document.createElement('span');
     timeEl.className = 'msg-time';
     timeEl.textContent = timeStr;
     bubble.appendChild(timeEl);
@@ -782,7 +774,7 @@ function addMessage(text, sender, opts) {
 
   if (!opts.noScroll) {
     // Only auto-scroll if user is near the bottom (not scrolled up reading history)
-    var isNearBottom = (messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight) < 150;
+    const isNearBottom = (messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight) < 150;
     if (isNearBottom) {
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
@@ -792,135 +784,85 @@ function addMessage(text, sender, opts) {
 }
 
 function processChatEvent(msg) {
-  var state = msg.state, runId = msg.runId, text = msg.text || '', error = msg.error, images = msg.images || [];
+  let state = msg.state, messageId = msg.messageId, text = msg.text || '', error = msg.error, images = msg.images || [];
+  
+  // Guard: if no messageId, generate a temporary one
+  if (!messageId) {
+    console.warn('[chat] Missing messageId, generating temporary');
+    messageId = 'temp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+  }
 
+  // Find existing bubble by messageId in DOM (stable across deltas, unique per message)
+  const existingBubble = messagesEl.querySelector('[data-msgid="' + messageId + '"]');
+  
   if (state === 'delta') {
     hideTyping();
     activeRunning = true;
-    var existing = botMessagesByRunId.get(runId);
     
-    if (existing) {
-      if (existing.finalized) {
-        // RunId was finalized but got reused — start fresh bubble
-        clearTimeout(existing.cleanupTimer);
-        var bubble = addMessage(text, 'bot', { timestamp: Date.now() });
-        botMessagesByRunId.set(runId, { bubble: bubble, runId: runId, finalized: false, maxTextLen: text.length });
-      } else {
-        // CRITICAL: Never let shorter text overwrite longer text (cumulative deltas)
-        // Only update if new text is longer OR similar length (allow small fluctuations)
-        if (text.length >= existing.maxTextLen - 10) {
-          var existingTimeEl = existing.bubble.querySelector('.msg-time');
-          setBubbleContent(existing.bubble, text);
-          if (existingTimeEl) existing.bubble.appendChild(existingTimeEl);
-          existing.maxTextLen = Math.max(existing.maxTextLen || 0, text.length);
-        }
-        // else: shorter text with same runId — ignore silently (cumulative delta protection)
-      }
+    if (existingBubble) {
+      // Update existing bubble
+      const existingTimeEl = existingBubble.querySelector('.msg-time');
+      setBubbleContent(existingBubble, text);
+      if (existingTimeEl) existingBubble.appendChild(existingTimeEl);
     } else {
-      // New runId — create bubble
-      var bubble = addMessage(text, 'bot', { timestamp: Date.now() });
-      botMessagesByRunId.set(runId, { bubble: bubble, runId: runId, finalized: false, maxTextLen: text.length });
+      // Create new bubble with data-msgid
+      const bubble = addMessage(text, 'bot', { timestamp: Date.now() });
+      bubble.setAttribute('data-msgid', messageId);
     }
     
     if ((messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight) < 150) {
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
-    if (window.setAvatarState) setAvatarState('talking');
-    clearTimeout(deltaGapTimer);
-    deltaGapTimer = setTimeout(function() {
-      if (activeRunning && window.setAvatarState) {
-        var deltaText = (text || '');
-        if (/```/.test(deltaText)) { setAvatarState('coding'); }
-        else { setAvatarState('working'); }
-      }
-    }, 2000);
+    // Avatar state now handled by server
 
   } else if (state === 'final') {
     hideTyping();
     if (text) {
-      var existing = botMessagesByRunId.get(runId);
-      if (existing && !existing.finalized) {
-        // Final always updates (it's authoritative)
-        setBubbleContent(existing.bubble, text);
-        existing.maxTextLen = text.length;
-      } else if (!existing) {
-        var bubble = addMessage(text, 'bot', { timestamp: Date.now() });
-        botMessagesByRunId.set(runId, { bubble: bubble, runId: runId, finalized: false, maxTextLen: text.length });
+      if (existingBubble) {
+        // Update existing bubble with final content
+        setBubbleContent(existingBubble, text);
+        existingBubble.removeAttribute('data-msgid'); // Done streaming
+      } else {
+        // Create new bubble (no streaming happened)
+        addMessage(text, 'bot', { timestamp: Date.now() });
       }
     }
     // Render inline images from bot response
     if (images && images.length > 0) {
-      for (var i = 0; i < images.length; i++) {
+      for (let i = 0; i < images.length; i++) {
         addImageMessage('', 'bot', images[i], { timestamp: Date.now() });
       }
-    }
-    var entry = botMessagesByRunId.get(runId);
-    if (entry) {
-      entry.finalized = true;
-      clearTimeout(entry.cleanupTimer);
-      entry.cleanupTimer = setTimeout(function() {
-        var current = botMessagesByRunId.get(runId);
-        if (current && current.finalized) botMessagesByRunId.delete(runId);
-      }, 60000);
     }
     if ((messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight) < 150) {
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
     activeRunning = false;
-    clearTimeout(deltaGapTimer);
-
-    // Server TTS handles audio — just update avatar state
-    if (window.setAvatarState) {
-      var finalText = text || '';
-      var avatarState = 'happy';
-      if (/```/.test(finalText) || /\bcode\b|\bfix(ed|ing)?\b|\bbug\b|\bfunction\b|\bsyntax\b/i.test(finalText)) {
-        avatarState = 'coding';
-      } else if (/🎉|✅|done|complete|success|shipped|fixed|working now|nailed/i.test(finalText)) {
-        avatarState = 'celebrating';
-      } else if (/error|fail|broken|crash|issue|unfortunately|can't|impossible/i.test(finalText)) {
-        avatarState = 'frustrated';
-      } else if (/think|consider|reflect|hmm|interesting|wonder|philosophy|meaning/i.test(finalText)) {
-        avatarState = 'reflecting';
-      }
-      setAvatarState(avatarState);
-      setTimeout(function() { setAvatarState('idle'); }, 4000);
-    }
+    // Avatar state now handled by server
 
   } else if (state === 'error') {
     hideTyping();
     activeRunning = false;
-    clearTimeout(deltaGapTimer);
-    var errorText = error || 'Something went wrong';
+    const errorText = error || 'Something went wrong';
+    // Remove any streaming bubble for this runId
+    if (existingBubble) existingBubble.remove();
     addMessage('Error: ' + errorText, 'bot', { timestamp: Date.now() });
-    var errEntry = botMessagesByRunId.get(runId);
-    if (errEntry) clearTimeout(errEntry.cleanupTimer);
-    botMessagesByRunId.delete(runId);
-    if (window.setAvatarState) {
-      if (/rate.?limit|rate_limit|429/i.test(errorText)) {
-        setAvatarState('sleeping');
-      } else {
-        setAvatarState('error');
-        setTimeout(function() { setAvatarState('idle'); }, 2000);
-      }
-    }
+    // Avatar state handled by server
 
   } else if (state === 'aborted') {
     hideTyping();
     activeRunning = false;
-    clearTimeout(deltaGapTimer);
-    var abortEntry = botMessagesByRunId.get(runId);
-    if (abortEntry) clearTimeout(abortEntry.cleanupTimer);
-    botMessagesByRunId.delete(runId);
-    if (window.setAvatarState) setAvatarState('idle');
+    // Remove any streaming bubble for this runId
+    if (existingBubble) existingBubble.remove();
+    // Avatar state handled by server
   }
 }
 
 // ─── Widget System ───
-var activeWidgets = new Map(); // id -> { element, data, type }
+const activeWidgets = new Map(); // id -> { element, data, type }
 
 function sendWidgetResponse(id, widgetType, value, action) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  var response = {
+  const response = {
     type: 'widget_response',
     id: id,
     widget: widgetType,
@@ -928,32 +870,31 @@ function sendWidgetResponse(id, widgetType, value, action) {
     action: action || 'submit'
   };
   ws.send(JSON.stringify(response));
-  console.log('[Widget] Sent response:', response);
 }
 
 function renderWidget(widgetData) {
-  var id = widgetData.id;
-  var type = widgetData.widget;
+  const id = widgetData.id;
+  const type = widgetData.widget;
   // Merge top-level properties into data (allows both formats)
   // Copy all properties except meta fields
-  var data = Object.assign({}, widgetData.data || {});
-  var skipKeys = ['id', 'widget', 'type', 'data', 'inline'];
+  const data = Object.assign({}, widgetData.data || {});
+  const skipKeys = ['id', 'widget', 'type', 'data', 'inline'];
   Object.keys(widgetData).forEach(function(key) {
     if (skipKeys.indexOf(key) === -1 && widgetData[key] !== undefined) {
       data[key] = widgetData[key];
     }
   });
-  var inline = widgetData.inline || false;
+  const inline = widgetData.inline || false;
   
   // Check if updating existing widget
-  var existing = activeWidgets.get(id);
+  const existing = activeWidgets.get(id);
   if (existing && type === 'progress') {
     // Update progress in place
     updateProgressWidget(existing.element, data);
     return existing.element;
   }
   
-  var container = document.createElement('div');
+  const container = document.createElement('div');
   container.className = 'widget widget-' + type + (inline ? ' widget-inline' : '');
   container.dataset.widgetId = id;
   container.dataset.widgetType = type;
@@ -987,7 +928,7 @@ function renderWidget(widgetData) {
   activeWidgets.set(id, { element: container, data: data, type: type });
   
   // Add to messages area
-  var welcome = messagesEl.querySelector('.welcome');
+  const welcome = messagesEl.querySelector('.welcome');
   if (welcome) welcome.remove();
   messagesEl.appendChild(container);
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -996,20 +937,20 @@ function renderWidget(widgetData) {
 }
 
 function renderButtonsWidget(container, id, data) {
-  var promptText = data.prompt || data.label;
+  const promptText = data.prompt || data.label;
   if (promptText) {
-    var prompt = document.createElement('div');
+    const prompt = document.createElement('div');
     prompt.className = 'widget-prompt';
     prompt.textContent = promptText;
     container.appendChild(prompt);
   }
   
-  var btnGroup = document.createElement('div');
+  const btnGroup = document.createElement('div');
   btnGroup.className = 'widget-btn-group' + (data.layout === 'vertical' ? ' vertical' : '');
   
-  var options = data.options || data.buttons || [];
+  const options = data.options || data.buttons || [];
   options.forEach(function(opt) {
-    var btn = document.createElement('button');
+    const btn = document.createElement('button');
     btn.className = 'widget-btn';
     
     if (typeof opt === 'string') {
@@ -1042,12 +983,12 @@ function renderButtonsWidget(container, id, data) {
   container.appendChild(btnGroup);
   
   if (data.multiSelect) {
-    var submitBtn = document.createElement('button');
+    const submitBtn = document.createElement('button');
     submitBtn.className = 'widget-btn primary widget-submit';
     submitBtn.textContent = 'Submit';
     submitBtn.addEventListener('click', function() {
       if (container.classList.contains('disabled')) return;
-      var selected = Array.from(btnGroup.querySelectorAll('.selected')).map(function(b) {
+      const selected = Array.from(btnGroup.querySelectorAll('.selected')).map(function(b) {
         return b.dataset.value;
       });
       container.classList.add('disabled');
@@ -1059,24 +1000,24 @@ function renderButtonsWidget(container, id, data) {
 
 function renderConfirmWidget(container, id, data) {
   if (data.title) {
-    var title = document.createElement('div');
+    const title = document.createElement('div');
     title.className = 'widget-title';
     title.textContent = data.title;
     container.appendChild(title);
   }
   
-  var messageText = data.message || data.label;
+  const messageText = data.message || data.label;
   if (messageText) {
-    var msg = document.createElement('div');
+    const msg = document.createElement('div');
     msg.className = 'widget-message';
     msg.textContent = messageText;
     container.appendChild(msg);
   }
   
-  var btnGroup = document.createElement('div');
+  const btnGroup = document.createElement('div');
   btnGroup.className = 'widget-btn-group';
   
-  var cancelBtn = document.createElement('button');
+  const cancelBtn = document.createElement('button');
   cancelBtn.className = 'widget-btn secondary';
   cancelBtn.textContent = data.cancelLabel || 'Cancel';
   cancelBtn.addEventListener('click', function() {
@@ -1085,7 +1026,7 @@ function renderConfirmWidget(container, id, data) {
     sendWidgetResponse(id, 'confirm', false, 'cancel');
   });
   
-  var confirmBtn = document.createElement('button');
+  const confirmBtn = document.createElement('button');
   confirmBtn.className = 'widget-btn ' + (data.confirmStyle === 'danger' ? 'danger' : 'primary');
   confirmBtn.textContent = data.confirmLabel || 'Confirm';
   confirmBtn.addEventListener('click', function() {
@@ -1101,27 +1042,27 @@ function renderConfirmWidget(container, id, data) {
 
 function renderCodeWidget(container, id, data) {
   if (data.filename) {
-    var header = document.createElement('div');
+    const header = document.createElement('div');
     header.className = 'widget-code-header';
     header.textContent = data.filename;
     container.appendChild(header);
   }
   
-  var pre = document.createElement('pre');
+  const pre = document.createElement('pre');
   pre.className = 'widget-code-block';
   if (data.language) pre.dataset.language = data.language;
   if (data.wrap) pre.style.whiteSpace = 'pre-wrap';
   
-  var code = document.createElement('code');
+  const code = document.createElement('code');
   code.textContent = data.code || '';
   pre.appendChild(code);
   container.appendChild(pre);
   
-  var actions = document.createElement('div');
+  const actions = document.createElement('div');
   actions.className = 'widget-code-actions';
   
   if (data.showCopy !== false) {
-    var copyBtn = document.createElement('button');
+    const copyBtn = document.createElement('button');
     copyBtn.className = 'widget-btn small';
     copyBtn.innerHTML = '📋 Copy';
     copyBtn.addEventListener('click', function() {
@@ -1135,7 +1076,7 @@ function renderCodeWidget(container, id, data) {
   }
   
   if (data.showRun) {
-    var runBtn = document.createElement('button');
+    const runBtn = document.createElement('button');
     runBtn.className = 'widget-btn small primary';
     runBtn.innerHTML = '▶ Run';
     runBtn.addEventListener('click', function() {
@@ -1149,16 +1090,16 @@ function renderCodeWidget(container, id, data) {
 
 function renderProgressWidget(container, id, data) {
   if (data.label) {
-    var label = document.createElement('div');
+    const label = document.createElement('div');
     label.className = 'widget-progress-label';
     label.textContent = data.label;
     container.appendChild(label);
   }
   
-  var barOuter = document.createElement('div');
+  const barOuter = document.createElement('div');
   barOuter.className = 'widget-progress-bar';
   
-  var barInner = document.createElement('div');
+  const barInner = document.createElement('div');
   barInner.className = 'widget-progress-fill';
   if (data.percent != null) {
     barInner.style.width = data.percent + '%';
@@ -1169,25 +1110,25 @@ function renderProgressWidget(container, id, data) {
   barOuter.appendChild(barInner);
   container.appendChild(barOuter);
   
-  var footer = document.createElement('div');
+  const footer = document.createElement('div');
   footer.className = 'widget-progress-footer';
   
   if (data.status) {
-    var status = document.createElement('span');
+    const status = document.createElement('span');
     status.className = 'widget-progress-status';
     status.textContent = data.status;
     footer.appendChild(status);
   }
   
   if (data.showPercent && data.percent != null) {
-    var pct = document.createElement('span');
+    const pct = document.createElement('span');
     pct.className = 'widget-progress-percent';
     pct.textContent = data.percent + '%';
     footer.appendChild(pct);
   }
   
   if (data.cancelable) {
-    var cancelBtn = document.createElement('button');
+    const cancelBtn = document.createElement('button');
     cancelBtn.className = 'widget-btn small secondary';
     cancelBtn.textContent = 'Cancel';
     cancelBtn.addEventListener('click', function() {
@@ -1202,16 +1143,16 @@ function renderProgressWidget(container, id, data) {
 
 function renderDatepickerWidget(container, id, data) {
   if (data.label) {
-    var label = document.createElement('div');
+    const label = document.createElement('div');
     label.className = 'widget-prompt';
     label.textContent = data.label;
     container.appendChild(label);
   }
   
-  var inputWrap = document.createElement('div');
+  const inputWrap = document.createElement('div');
   inputWrap.className = 'widget-datepicker-wrap';
   
-  var input = document.createElement('input');
+  const input = document.createElement('input');
   input.className = 'widget-form-input widget-datepicker-input';
   input.type = data.type || 'date'; // date, time, datetime-local
   if (data.value) input.value = data.value;
@@ -1221,10 +1162,10 @@ function renderDatepickerWidget(container, id, data) {
   inputWrap.appendChild(input);
   container.appendChild(inputWrap);
   
-  var btnGroup = document.createElement('div');
+  const btnGroup = document.createElement('div');
   btnGroup.className = 'widget-btn-group';
   
-  var submitBtn = document.createElement('button');
+  const submitBtn = document.createElement('button');
   submitBtn.className = 'widget-btn primary';
   submitBtn.textContent = data.submitLabel || 'Select';
   submitBtn.addEventListener('click', function() {
@@ -1242,42 +1183,42 @@ function renderDatepickerWidget(container, id, data) {
 }
 
 function renderCarouselWidget(container, id, data) {
-  var items = data.items || [];
+  const items = data.items || [];
   if (items.length === 0) return;
   
-  var currentIndex = 0;
+  let currentIndex = 0;
   
-  var carousel = document.createElement('div');
+  const carousel = document.createElement('div');
   carousel.className = 'widget-carousel';
   
-  var viewport = document.createElement('div');
+  const viewport = document.createElement('div');
   viewport.className = 'widget-carousel-viewport';
   
-  var track = document.createElement('div');
+  const track = document.createElement('div');
   track.className = 'widget-carousel-track';
   
   items.forEach(function(item, idx) {
-    var slide = document.createElement('div');
+    const slide = document.createElement('div');
     slide.className = 'widget-carousel-slide';
     
     if (item.type === 'image' || item.image || item.url) {
-      var img = document.createElement('img');
+      const img = document.createElement('img');
       img.src = item.url || item.image;
       img.alt = item.caption || item.title || '';
       slide.appendChild(img);
     }
     
     if (item.title || item.caption || item.description) {
-      var info = document.createElement('div');
+      const info = document.createElement('div');
       info.className = 'widget-carousel-info';
       if (item.title) {
-        var title = document.createElement('div');
+        const title = document.createElement('div');
         title.className = 'widget-carousel-title';
         title.textContent = item.title;
         info.appendChild(title);
       }
       if (item.caption || item.description) {
-        var desc = document.createElement('div');
+        const desc = document.createElement('div');
         desc.className = 'widget-carousel-desc';
         desc.textContent = item.caption || item.description;
         info.appendChild(desc);
@@ -1307,23 +1248,23 @@ function renderCarouselWidget(container, id, data) {
   }
   
   if (data.showArrows !== false && items.length > 1) {
-    var prevBtn = document.createElement('button');
+    const prevBtn = document.createElement('button');
     prevBtn.className = 'widget-carousel-arrow prev';
     prevBtn.innerHTML = '‹';
     prevBtn.addEventListener('click', function() { goTo(currentIndex - 1); });
     carousel.appendChild(prevBtn);
     
-    var nextBtn = document.createElement('button');
+    const nextBtn = document.createElement('button');
     nextBtn.className = 'widget-carousel-arrow next';
     nextBtn.innerHTML = '›';
     nextBtn.addEventListener('click', function() { goTo(currentIndex + 1); });
     carousel.appendChild(nextBtn);
   }
   
-  var dots;
+  let dots;
   function updateDots() {
     if (!dots) return;
-    var dotEls = dots.querySelectorAll('.widget-carousel-dot');
+    const dotEls = dots.querySelectorAll('.widget-carousel-dot');
     dotEls.forEach(function(d, i) {
       d.classList.toggle('active', i === currentIndex);
     });
@@ -1333,7 +1274,7 @@ function renderCarouselWidget(container, id, data) {
     dots = document.createElement('div');
     dots.className = 'widget-carousel-dots';
     items.forEach(function(_, idx) {
-      var dot = document.createElement('button');
+      const dot = document.createElement('button');
       dot.className = 'widget-carousel-dot' + (idx === 0 ? ' active' : '');
       dot.addEventListener('click', function() { goTo(idx); });
       dots.appendChild(dot);
@@ -1348,9 +1289,9 @@ function applyWidgetResponse(container, widgetType, data, response) {
   container.classList.add('disabled');
   
   switch (widgetType) {
-    case 'buttons':
+    case 'buttons': {
       // Highlight the selected button
-      var buttons = container.querySelectorAll('.widget-btn');
+      const buttons = container.querySelectorAll('.widget-btn');
       buttons.forEach(function(btn) {
         if (btn.dataset.value === response.value || 
             (Array.isArray(response.value) && response.value.includes(btn.dataset.value))) {
@@ -1358,9 +1299,10 @@ function applyWidgetResponse(container, widgetType, data, response) {
         }
       });
       break;
-    case 'confirm':
+    }
+    case 'confirm': {
       // Show which option was chosen
-      var btns = container.querySelectorAll('.widget-btn');
+      const btns = container.querySelectorAll('.widget-btn');
       btns.forEach(function(btn) {
         if ((response.value && btn.classList.contains('primary')) ||
             (!response.value && btn.classList.contains('secondary'))) {
@@ -1368,16 +1310,17 @@ function applyWidgetResponse(container, widgetType, data, response) {
         }
       });
       break;
-    case 'form':
+    }
+    case 'form': {
       // Fill in the form values
       if (response.value && typeof response.value === 'object') {
         Object.keys(response.value).forEach(function(key) {
-          var input = container.querySelector('[data-field-name="' + key + '"]');
+          const input = container.querySelector('[data-field-name="' + key + '"]');
           if (input) {
             if (input.type === 'checkbox') {
               input.checked = !!response.value[key];
             } else if (input._isRadioGroup) {
-              var radio = input.querySelector('input[value="' + response.value[key] + '"]');
+              const radio = input.querySelector('input[value="' + response.value[key] + '"]');
               if (radio) radio.checked = true;
             } else {
               input.value = response.value[key] || '';
@@ -1386,26 +1329,29 @@ function applyWidgetResponse(container, widgetType, data, response) {
         });
       }
       break;
-    case 'datepicker':
-      var dateInput = container.querySelector('.widget-datepicker-input');
+    }
+    case 'datepicker': {
+      const dateInput = container.querySelector('.widget-datepicker-input');
       if (dateInput && response.value) {
         dateInput.value = response.value;
       }
       break;
-    case 'carousel':
+    }
+    case 'carousel': {
       if (response.value && typeof response.value.index === 'number') {
-        var slides = container.querySelectorAll('.widget-carousel-slide');
+        const slides = container.querySelectorAll('.widget-carousel-slide');
         if (slides[response.value.index]) {
           slides[response.value.index].style.outline = '3px solid var(--accent)';
         }
       }
       break;
+    }
     // code and progress don't need special response handling
   }
 }
 
 function updateProgressWidget(container, data) {
-  var fill = container.querySelector('.widget-progress-fill');
+  const fill = container.querySelector('.widget-progress-fill');
   if (fill) {
     if (data.percent != null) {
       fill.style.width = data.percent + '%';
@@ -1415,38 +1361,38 @@ function updateProgressWidget(container, data) {
     }
   }
   
-  var label = container.querySelector('.widget-progress-label');
+  const label = container.querySelector('.widget-progress-label');
   if (label && data.label) label.textContent = data.label;
   
-  var status = container.querySelector('.widget-progress-status');
+  const status = container.querySelector('.widget-progress-status');
   if (status && data.status) status.textContent = data.status;
   
-  var pct = container.querySelector('.widget-progress-percent');
+  const pct = container.querySelector('.widget-progress-percent');
   if (pct && data.percent != null) pct.textContent = data.percent + '%';
 }
 
 function renderFormWidget(container, id, data) {
   if (data.title) {
-    var title = document.createElement('div');
+    const title = document.createElement('div');
     title.className = 'widget-title';
     title.textContent = data.title;
     container.appendChild(title);
   }
   
-  var form = document.createElement('div');
+  const form = document.createElement('div');
   form.className = 'widget-form-fields';
   
-  var fields = data.fields || [];
+  const fields = data.fields || [];
   fields.forEach(function(field) {
-    var fieldDiv = document.createElement('div');
+    const fieldDiv = document.createElement('div');
     fieldDiv.className = 'widget-form-field';
     
     if (field.label) {
-      var label = document.createElement('label');
+      const label = document.createElement('label');
       label.className = 'widget-form-label';
       label.textContent = field.label;
       if (field.required) {
-        var req = document.createElement('span');
+        const req = document.createElement('span');
         req.className = 'widget-form-required';
         req.textContent = ' *';
         label.appendChild(req);
@@ -1454,7 +1400,7 @@ function renderFormWidget(container, id, data) {
       fieldDiv.appendChild(label);
     }
     
-    var input;
+    let input;
     switch (field.type) {
       case 'textarea':
         input = document.createElement('textarea');
@@ -1465,7 +1411,7 @@ function renderFormWidget(container, id, data) {
         input = document.createElement('select');
         input.className = 'widget-form-input widget-form-select';
         (field.options || []).forEach(function(opt) {
-          var option = document.createElement('option');
+          const option = document.createElement('option');
           if (typeof opt === 'string') {
             option.value = opt;
             option.textContent = opt;
@@ -1476,30 +1422,31 @@ function renderFormWidget(container, id, data) {
           input.appendChild(option);
         });
         break;
-      case 'checkbox':
-        var checkWrap = document.createElement('div');
+      case 'checkbox': {
+        const checkWrap = document.createElement('div');
         checkWrap.className = 'widget-form-checkbox-wrap';
         input = document.createElement('input');
         input.type = 'checkbox';
         input.className = 'widget-form-checkbox';
-        var checkLabel = document.createElement('span');
+        const checkLabel = document.createElement('span');
         checkLabel.textContent = field.checkLabel || '';
         checkWrap.appendChild(input);
         checkWrap.appendChild(checkLabel);
         fieldDiv.appendChild(checkWrap);
         input._isCheckbox = true;
         break;
-      case 'radio':
-        var radioGroup = document.createElement('div');
+      }
+      case 'radio': {
+        const radioGroup = document.createElement('div');
         radioGroup.className = 'widget-form-radio-group';
-        (field.options || []).forEach(function(opt, idx) {
-          var radioWrap = document.createElement('label');
+        (field.options || []).forEach(function(opt, _idx) {
+          const radioWrap = document.createElement('label');
           radioWrap.className = 'widget-form-radio-wrap';
-          var radio = document.createElement('input');
+          const radio = document.createElement('input');
           radio.type = 'radio';
           radio.name = 'field-' + field.name;
           radio.value = typeof opt === 'string' ? opt : opt.value;
-          var radioLabel = document.createElement('span');
+          const radioLabel = document.createElement('span');
           radioLabel.textContent = typeof opt === 'string' ? opt : (opt.label || opt.value);
           radioWrap.appendChild(radio);
           radioWrap.appendChild(radioLabel);
@@ -1509,6 +1456,7 @@ function renderFormWidget(container, id, data) {
         input = radioGroup;
         input._isRadioGroup = true;
         break;
+      }
       default:
         input = document.createElement('input');
         input.type = field.type || 'text';
@@ -1528,10 +1476,10 @@ function renderFormWidget(container, id, data) {
   
   container.appendChild(form);
   
-  var btnGroup = document.createElement('div');
+  const btnGroup = document.createElement('div');
   btnGroup.className = 'widget-btn-group widget-form-buttons';
   
-  var cancelBtn = document.createElement('button');
+  const cancelBtn = document.createElement('button');
   cancelBtn.className = 'widget-btn secondary';
   cancelBtn.textContent = data.cancelLabel || 'Cancel';
   cancelBtn.addEventListener('click', function() {
@@ -1540,23 +1488,23 @@ function renderFormWidget(container, id, data) {
     sendWidgetResponse(id, 'form', null, 'cancel');
   });
   
-  var submitBtn = document.createElement('button');
+  const submitBtn = document.createElement('button');
   submitBtn.className = 'widget-btn primary';
   submitBtn.textContent = data.submitLabel || 'Submit';
   submitBtn.addEventListener('click', function() {
     if (container.classList.contains('disabled')) return;
     
-    var values = {};
-    var valid = true;
+    const values = {};
+    let valid = true;
     
     fields.forEach(function(field) {
-      var el = form.querySelector('[data-field-name="' + field.name + '"]');
+      const el = form.querySelector('[data-field-name="' + field.name + '"]');
       if (!el) return;
       
       if (el._isCheckbox) {
         values[field.name] = el.checked;
       } else if (el._isRadioGroup) {
-        var checked = el.querySelector('input:checked');
+        const checked = el.querySelector('input:checked');
         values[field.name] = checked ? checked.value : null;
       } else if (field.type === 'number' || field.type === 'range') {
         values[field.name] = el.value ? parseFloat(el.value) : null;
@@ -1584,15 +1532,15 @@ function renderFormWidget(container, id, data) {
 }
 
 // ─── Speech preview (live transcription in chat area) ───
-var speechPreviewEl = null;
+let speechPreviewEl = null;
 
 function showSpeechPreview(text) {
   // Show in messages area as pending bubble (real-time transcript)
   if (!speechPreviewEl) {
-    var div = document.createElement('div');
+    const div = document.createElement('div');
     div.className = 'message user speech-preview';
 
-    var bubble = document.createElement('div');
+    const bubble = document.createElement('div');
     bubble.className = 'bubble user';
     bubble.style.opacity = '0.7';
     bubble.style.borderStyle = 'dashed';
@@ -1617,17 +1565,17 @@ function hideSpeechPreview() {
 
 function showTyping() {
   if (typingEl) return;
-  var welcome = messagesEl.querySelector('.welcome');
+  const welcome = messagesEl.querySelector('.welcome');
   if (welcome) welcome.remove();
 
-  var div = document.createElement('div');
+  const div = document.createElement('div');
   div.className = 'message bot';
 
-  var avatar = document.createElement('div');
+  const avatar = document.createElement('div');
   avatar.className = 'msg-avatar';
   avatar.textContent = CFG.botEmoji;
 
-  var typing = document.createElement('div');
+  const typing = document.createElement('div');
   typing.className = 'typing';
   typing.innerHTML = '<span></span><span></span><span></span>';
 
@@ -1653,35 +1601,35 @@ window._e2ePendingFetches = {};  // url → true (dedup in-flight requests)
 // the server, derives a shared secret, then uses HKDF to produce an
 // AES-256-GCM key. All messages after handshake are encrypted.
 // See server.js § 11 for the full protocol description.
-var e2eKey = null; // CryptoKey for AES-GCM
-var e2eReady = false;
-var e2ePendingOutbound = [];
+let e2eKey = null; // CryptoKey for AES-GCM
+let e2eReady = false;
+let e2ePendingOutbound = [];
 
 async function e2eInit(serverPubKeyB64) {
   try {
     // Generate client ECDH keypair
-    var keyPair = await crypto.subtle.generateKey(
+    const keyPair = await crypto.subtle.generateKey(
       { name: 'ECDH', namedCurve: 'P-256' },
       true, ['deriveBits']
     );
     // Import server public key (raw format from base64 uncompressed point)
-    var serverPubRaw = Uint8Array.from(atob(serverPubKeyB64), function(c) { return c.charCodeAt(0); });
-    var serverPubKey = await crypto.subtle.importKey(
+    const serverPubRaw = Uint8Array.from(atob(serverPubKeyB64), function(c) { return c.charCodeAt(0); });
+    const serverPubKey = await crypto.subtle.importKey(
       'raw', serverPubRaw,
       { name: 'ECDH', namedCurve: 'P-256' },
       false, []
     );
     // Derive shared secret bits
-    var sharedBits = await crypto.subtle.deriveBits(
+    const sharedBits = await crypto.subtle.deriveBits(
       { name: 'ECDH', public: serverPubKey },
       keyPair.privateKey, 256
     );
     // HKDF: import shared secret as key material
-    var hkdfKey = await crypto.subtle.importKey(
+    const hkdfKey = await crypto.subtle.importKey(
       'raw', sharedBits, 'HKDF', false, ['deriveKey']
     );
-    var salt = new TextEncoder().encode('clawtime-e2e-salt');
-    var info = new TextEncoder().encode('clawtime-e2e-key');
+    const salt = new TextEncoder().encode('clawtime-e2e-salt');
+    const info = new TextEncoder().encode('clawtime-e2e-key');
     e2eKey = await crypto.subtle.deriveKey(
       { name: 'HKDF', hash: 'SHA-256', salt: salt, info: info },
       hkdfKey,
@@ -1689,8 +1637,8 @@ async function e2eInit(serverPubKeyB64) {
       false, ['encrypt', 'decrypt']
     );
     // Export client public key and send to server
-    var clientPubRaw = await crypto.subtle.exportKey('raw', keyPair.publicKey);
-    var clientPubB64 = btoa(String.fromCharCode.apply(null, new Uint8Array(clientPubRaw)));
+    const clientPubRaw = await crypto.subtle.exportKey('raw', keyPair.publicKey);
+    const clientPubB64 = btoa(String.fromCharCode.apply(null, new Uint8Array(clientPubRaw)));
     ws.send(JSON.stringify({ type: 'e2e_key', clientPublicKey: clientPubB64 }));
   } catch (err) {
     console.error('[E2E] Init failed:', err);
@@ -1702,8 +1650,8 @@ async function e2eInit(serverPubKeyB64) {
 // because .apply() spreads the entire array as function arguments. We chunk
 // at 8192 bytes to stay well within the stack limit on all browsers.
 function uint8ToBase64(bytes) {
-  var chunks = [];
-  for (var i = 0; i < bytes.length; i += 8192) {
+  const chunks = [];
+  for (let i = 0; i < bytes.length; i += 8192) {
     chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, i + 8192)));
   }
   return btoa(chunks.join(''));
@@ -1711,16 +1659,16 @@ function uint8ToBase64(bytes) {
 
 async function e2eEncrypt(plaintext) {
   if (!e2eKey) return plaintext;
-  var iv = crypto.getRandomValues(new Uint8Array(12));
-  var enc = await crypto.subtle.encrypt(
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const enc = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv: iv },
     e2eKey,
     new TextEncoder().encode(plaintext)
   );
   // AES-GCM output includes tag appended to ciphertext
-  var encBytes = new Uint8Array(enc);
-  var ciphertext = encBytes.slice(0, encBytes.length - 16);
-  var tag = encBytes.slice(encBytes.length - 16);
+  const encBytes = new Uint8Array(enc);
+  const ciphertext = encBytes.slice(0, encBytes.length - 16);
+  const tag = encBytes.slice(encBytes.length - 16);
   return JSON.stringify({
     _e2e: true,
     iv: uint8ToBase64(iv),
@@ -1731,16 +1679,16 @@ async function e2eEncrypt(plaintext) {
 
 async function e2eDecrypt(raw) {
   try {
-    var msg = JSON.parse(raw);
+    const msg = JSON.parse(raw);
     if (!msg._e2e || !e2eKey) return raw;
-    var iv = Uint8Array.from(atob(msg.iv), function(c) { return c.charCodeAt(0); });
-    var tag = Uint8Array.from(atob(msg.tag), function(c) { return c.charCodeAt(0); });
-    var data = Uint8Array.from(atob(msg.data), function(c) { return c.charCodeAt(0); });
+    const iv = Uint8Array.from(atob(msg.iv), function(c) { return c.charCodeAt(0); });
+    const tag = Uint8Array.from(atob(msg.tag), function(c) { return c.charCodeAt(0); });
+    const data = Uint8Array.from(atob(msg.data), function(c) { return c.charCodeAt(0); });
     // Reassemble ciphertext + tag for Web Crypto (AES-GCM expects them concatenated)
-    var combined = new Uint8Array(data.length + tag.length);
+    const combined = new Uint8Array(data.length + tag.length);
     combined.set(data);
     combined.set(tag, data.length);
-    var dec = await crypto.subtle.decrypt(
+    const dec = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: iv },
       e2eKey,
       combined
@@ -1759,9 +1707,10 @@ async function secureSend(data) {
     e2ePendingOutbound.push(data);
   }
 }
+window.secureSend = secureSend;
 
 async function flushE2ePending() {
-  for (var i = 0; i < e2ePendingOutbound.length; i++) {
+  for (let i = 0; i < e2ePendingOutbound.length; i++) {
     ws.send(await e2eEncrypt(e2ePendingOutbound[i]));
   }
   e2ePendingOutbound = [];
@@ -1769,22 +1718,25 @@ async function flushE2ePending() {
 
 // ─── WebSocket ───
 function connectWs() {
-  console.log('[WS] connectWs called, sessionToken:', sessionToken?.slice(0, 8) + '...');
   if (ws) { ws.close(); ws = null; }
   // Reset E2E state on reconnect
   e2eKey = null;
   e2eReady = false;
   e2ePendingOutbound = [];
 
-  var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  console.log('[WS] Connecting to', protocol + '//' + location.host);
+  // Generate unique visitor ID for this tab (for message dedup)
+  if (!window._visitorId) {
+    window._visitorId = Math.random().toString(36).slice(2, 10);
+  }
+  
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(protocol + '//' + location.host);
 
   // Heartbeat to detect dead connections
-  var heartbeatInterval = null;
-  var heartbeatTimeout = null;
-  var HEARTBEAT_INTERVAL = 30000; // 30 seconds
-  var HEARTBEAT_TIMEOUT = 10000;  // 10 seconds to respond
+  let heartbeatInterval = null;
+  let heartbeatTimeout = null;
+  const HEARTBEAT_INTERVAL = 30000; // 30 seconds
+  const HEARTBEAT_TIMEOUT = 10000;  // 10 seconds to respond
   
   function startHeartbeat() {
     stopHeartbeat();
@@ -1809,7 +1761,6 @@ function connectWs() {
   }
 
   ws.onopen = function() {
-    console.log('[WS] Connected, sending auth with token:', sessionToken?.slice(0, 8) + '...');
     ws.send(JSON.stringify({ type: 'auth', token: sessionToken }));
     startHeartbeat();
   };
@@ -1817,18 +1768,17 @@ function connectWs() {
   ws.onmessage = async function(e) {
     try {
       // Decrypt if E2E is active, or pass through for handshake messages
-      var rawData = e.data;
-      var decrypted = rawData;
+      const rawData = e.data;
+      let decrypted = rawData;
       try {
-        var peek = JSON.parse(rawData);
+        const peek = JSON.parse(rawData);
         if (peek._e2e && e2eKey) {
           decrypted = await e2eDecrypt(rawData);
         }
       } catch(pe) { /* not JSON or not encrypted */ }
-      var msg = JSON.parse(decrypted);
+      const msg = JSON.parse(decrypted);
 
       if (msg.type === 'auth_ok') {
-        console.log('[WS] auth_ok received, starting E2E');
         setStatus('connecting');
         // Start E2E key exchange if server sent its public key
         if (msg.serverPublicKey) {
@@ -1838,19 +1788,16 @@ function connectWs() {
       }
       
       if (msg.type === 'auth_fail') {
-        console.log('[WS] auth_fail received');
         return;
       }
 
       // E2E key exchange complete
       if (msg.type === 'e2e_ready') {
-        console.log('[WS] e2e_ready received, E2E encryption active');
         e2eReady = true;
         // E2E active — no title change (favicon only)
         flushE2ePending();
         // Re-send voice mode state after reconnection
         if (window.callActive) {
-          console.log('[Voice] Re-sending voice_mode:true after reconnect');
           secureSend(JSON.stringify({ type: 'voice_mode', enabled: true }));
         }
         return;
@@ -1858,22 +1805,22 @@ function connectWs() {
 
       // E2E resource response — set blob URL on all matching images
       if (msg.type === 'resource_data' && msg.url && msg.data) {
-        var bytes = atob(msg.data);
-        var arr = new Uint8Array(bytes.length);
-        for (var ri = 0; ri < bytes.length; ri++) arr[ri] = bytes.charCodeAt(ri);
-        var blob = new Blob([arr], { type: msg.mimeType || 'application/octet-stream' });
-        var blobUrl = URL.createObjectURL(blob);
+        const bytes = atob(msg.data);
+        const arr = new Uint8Array(bytes.length);
+        for (let ri = 0; ri < bytes.length; ri++) arr[ri] = bytes.charCodeAt(ri);
+        const blob = new Blob([arr], { type: msg.mimeType || 'application/octet-stream' });
+        const blobUrl = URL.createObjectURL(blob);
         // Cache for future re-renders
         if (!window._e2eBlobCache) window._e2eBlobCache = {};
         window._e2eBlobCache[msg.url] = blobUrl;
         if (window._e2ePendingFetches) delete window._e2ePendingFetches[msg.url];
         // Preserve scroll position when images load
-        var prevScrollTop = messagesEl.scrollTop;
-        var prevScrollHeight = messagesEl.scrollHeight;
-        var wasAtBottom = (messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight) < 50;
+        const prevScrollTop = messagesEl.scrollTop;
+        const prevScrollHeight = messagesEl.scrollHeight;
+        const wasAtBottom = (messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight) < 50;
         // Find all img elements waiting for this URL
-        var imgs = document.querySelectorAll('img[data-e2e-url="' + msg.url + '"]');
-        for (var ii = 0; ii < imgs.length; ii++) {
+        const imgs = document.querySelectorAll('img[data-e2e-url="' + msg.url + '"]');
+        for (let ii = 0; ii < imgs.length; ii++) {
           imgs[ii].src = blobUrl;
           imgs[ii].removeAttribute('data-e2e-url');
         }
@@ -1883,7 +1830,7 @@ function connectWs() {
             messagesEl.scrollTop = messagesEl.scrollHeight;
           } else {
             // Keep scroll position stable — adjust for height change
-            var heightDiff = messagesEl.scrollHeight - prevScrollHeight;
+            const heightDiff = messagesEl.scrollHeight - prevScrollHeight;
             messagesEl.scrollTop = prevScrollTop + heightDiff;
           }
         });
@@ -1894,9 +1841,9 @@ function connectWs() {
       if (msg.type === 'tts_audio' && msg.audioData) {
         // Decode base64 directly to ArrayBuffer — skip blob URLs (iOS compat)
         try {
-          var audioBytes = atob(msg.audioData);
+          const audioBytes = atob(msg.audioData);
           var audioArr = new Uint8Array(audioBytes.length);
-          for (var ai = 0; ai < audioBytes.length; ai++) audioArr[ai] = audioBytes.charCodeAt(ai);
+          for (let ai = 0; ai < audioBytes.length; ai++) audioArr[ai] = audioBytes.charCodeAt(ai);
         } catch(ttsErr) {
           console.error('[TTS] Failed to decode audio:', ttsErr);
           return;
@@ -1932,13 +1879,12 @@ function connectWs() {
       if (msg.type === 'auth_required') return;
 
       if (msg.type === 'connected') {
-        console.log('[WS] connected received, going online');
         setStatus('online');
         secureSend(JSON.stringify({ type: 'get_history' }));
         // Restore exact avatar state from server
         if (msg.avatarState && window.setAvatarState) {
           // Use original function to avoid re-sending to server
-          var origFn = window.setAvatarState._original || window.setAvatarState;
+          const origFn = window.setAvatarState._original || window.setAvatarState;
           origFn(msg.avatarState);
           if (msg.avatarState !== 'idle') activeRunning = true;
         }
@@ -1963,16 +1909,9 @@ function connectWs() {
 
       if (msg.type === 'error') {
         hideTyping();
-        var errorText = msg.data || '';
+        const errorText = msg.data || '';
         addMessage('Error: ' + errorText, 'bot', { timestamp: Date.now() });
-        if (window.setAvatarState) {
-          if (/rate.?limit|rate_limit|429/i.test(errorText)) {
-            setAvatarState('sleeping');
-          } else {
-            setAvatarState('error');
-            setTimeout(function() { setAvatarState('idle'); }, 2000);
-          }
-        }
+        // Avatar state handled by server
         return;
       }
 
@@ -1980,7 +1919,7 @@ function connectWs() {
         hideTyping();
         // Remove transcribing placeholder
         if (window._whisperPlaceholder) {
-          try { window._whisperPlaceholder.remove(); } catch(e) {}
+          try { window._whisperPlaceholder.remove(); } catch(_e) { /* ignore */ }
           window._whisperPlaceholder = null;
         }
         if (msg.text) {
@@ -1988,7 +1927,7 @@ function connectWs() {
           showTyping();
           setCallStatus('thinking');
           if (window.setAvatarState) setAvatarState('thinking');
-        } else if (sttActive && callActive) {
+        } else if (sttActive && window.callActive) {
           // Empty transcription — restart recording
           startRecordingChunk();
         }
@@ -1999,7 +1938,7 @@ function connectWs() {
         hideTyping();
         // Remove transcribing placeholder
         if (window._whisperPlaceholder) {
-          try { window._whisperPlaceholder.remove(); } catch(e) {}
+          try { window._whisperPlaceholder.remove(); } catch(_e) { /* ignore */ }
           window._whisperPlaceholder = null;
         }
         addMessage('🎤 ' + (msg.error || 'Voice transcription failed'), 'bot', { timestamp: Date.now() });
@@ -2010,11 +1949,11 @@ function connectWs() {
       // ── Re-verify request from bot ──
       if (msg.type === 'reverify_request') {
         (function() {
-          var reqId = msg.requestId || '';
-          var reason = msg.reason || 'Sensitive operation requested';
+          const reqId = msg.requestId || '';
+          const reason = msg.reason || 'Sensitive operation requested';
 
           // Show confirmation dialog with context
-          var modal = document.createElement('div');
+          const modal = document.createElement('div');
           modal.className = 'passphrase-modal open';
           modal.innerHTML = '<div class="passphrase-card" style="max-width:360px;">' +
             '<h3>🔐 Identity Verification</h3>' +
@@ -2068,21 +2007,21 @@ function connectWs() {
       // them and render using addImageMessage() so they display inline
       // just like freshly-sent images.
       if (msg.type === 'history') {
-        var rawMessages = msg.messages || [];
+        const rawMessages = msg.messages || [];
         
         // Check if we already have messages displayed (reconnect scenario)
-        var existingMsgCount = messagesEl.querySelectorAll('.message').length;
-        var isReconnect = existingMsgCount > 0;
+        const existingMsgCount = messagesEl.querySelectorAll('.message').length;
+        const isReconnect = existingMsgCount > 0;
         
         if (isReconnect) {
           // Reconnect — don't re-render, just update historyMessages for "load more"
           // This preserves any in-flight streaming messages
           historyMessages = [];
-          for (var hi = 0; hi < rawMessages.length; hi++) {
-            var hm = rawMessages[hi];
-            var text = hm.text || (typeof hm.content === 'string' ? hm.content : '');
-            if (text.trim()) {
-              historyMessages.push({ role: hm.role === 'user' ? 'user' : 'bot', text: text, timestamp: hm.timestamp });
+          for (let i = 0; i < rawMessages.length; i++) {
+            const hm = rawMessages[i];
+            const hmText = hm.text || (typeof hm.content === 'string' ? hm.content : '');
+            if (hmText.trim()) {
+              historyMessages.push({ role: hm.role === 'user' ? 'user' : 'bot', text: hmText, timestamp: hm.timestamp });
             }
           }
           historyIndex = Math.max(0, historyMessages.length - HISTORY_PAGE_SIZE);
@@ -2092,18 +2031,22 @@ function connectWs() {
         
         // First load — clear welcome and render history
         historyMessages = [];
-        var welcome = messagesEl.querySelector('.welcome');
+        const welcome = messagesEl.querySelector('.welcome');
         if (welcome) welcome.remove();
-        botMessagesByRunId.clear();
+        // Clear any streaming bubbles
+        const streamingBubbles = messagesEl.querySelectorAll('[data-msgid]');
+        for (let sb = 0; sb < streamingBubbles.length; sb++) {
+          streamingBubbles[sb].removeAttribute('data-msgid');
+        }
         hideTyping();
         
-        for (var hi = 0; hi < rawMessages.length; hi++) {
-          var historyMsg = rawMessages[hi];
+        for (let hi = 0; hi < rawMessages.length; hi++) {
+          const historyMsg = rawMessages[hi];
           // Store format: { role: 'user'|'bot', text, images?, timestamp }
           // Also handle legacy gateway format (content blocks) for backwards compat
-          var role = historyMsg.role === 'user' ? 'user' : 'bot';
-          var text = '';
-          var images = [];
+          const role = historyMsg.role === 'user' ? 'user' : 'bot';
+          let msgText = '';
+          let images = [];
 
           // Check for widget in history
           if (historyMsg.widget) {
@@ -2113,40 +2056,40 @@ function connectWs() {
 
           if (historyMsg.text !== undefined) {
             // New store format — simple text field
-            text = historyMsg.text || '';
+            msgText = historyMsg.text || '';
             images = historyMsg.images || [];
           } else if (Array.isArray(historyMsg.content)) {
             // Legacy gateway format — content blocks
-            for (var ci = 0; ci < historyMsg.content.length; ci++) {
-              var block = historyMsg.content[ci];
+            for (let ci = 0; ci < historyMsg.content.length; ci++) {
+              const block = historyMsg.content[ci];
               if (block.type === 'text') {
-                text += block.text || '';
+                msgText += block.text || '';
               } else if (block.type === 'image' && block.source && block.source.data) {
                 images.push('data:' + (block.source.media_type || 'image/jpeg') + ';base64,' + block.source.data);
               }
             }
           } else if (typeof historyMsg.content === 'string') {
-            text = historyMsg.content;
+            msgText = historyMsg.content;
           }
 
-          if (text.trim() || images.length > 0) {
-            historyMessages.push({ role: role, text: text, timestamp: historyMsg.timestamp || null, images: images });
+          if (msgText.trim() || images.length > 0) {
+            historyMessages.push({ role: role, text: msgText, timestamp: historyMsg.timestamp || null, images: images });
           }
         }
 
         historyIndex = Math.max(0, historyMessages.length - HISTORY_PAGE_SIZE);
-        var welcome = messagesEl.querySelector('.welcome');
-        if (welcome) welcome.remove();
+        const welcomeEl = messagesEl.querySelector('.welcome');
+        if (welcomeEl) welcomeEl.remove();
 
         if (historyMessages.length > HISTORY_PAGE_SIZE) {
           showLoadMoreIndicator();
         }
 
-        for (var i = historyIndex; i < historyMessages.length; i++) {
-          var m = historyMessages[i];
+        for (let i = historyIndex; i < historyMessages.length; i++) {
+          const m = historyMessages[i];
           if (m.widget) {
             // Check if widget already rendered (dedup live vs history)
-            var existingWidget = document.querySelector('[data-widget-id="' + m.widget.id + '"]');
+            const existingWidget = document.querySelector('[data-widget-id="' + m.widget.id + '"]');
             if (existingWidget) {
               // Widget exists - but apply response if it has one and widget isn't disabled
               if (m.widget.response && !existingWidget.classList.contains('disabled')) {
@@ -2155,20 +2098,20 @@ function connectWs() {
               continue;
             }
             // Render widget from history (pass full widget object, renderWidget handles both formats)
-            var widgetEl = renderWidget(m.widget);
+            const widgetEl = renderWidget(m.widget);
             // If already responded, show response state and disable
             if (m.widget.response && widgetEl) {
               applyWidgetResponse(widgetEl, m.widget.widget, m.widget.data, m.widget.response);
             }
           } else if (m.images && m.images.length > 0) {
-            addImageMessage(m.text, m.role, m.images[0], { timestamp: m.timestamp, noScroll: true });
+            addImageMessage(m.text, m.role, m.images, { timestamp: m.timestamp, noScroll: true });
           } else {
             addMessage(m.text, m.role, { timestamp: m.timestamp, noScroll: true });
           }
         }
 
         historyLoaded = true;
-        for (var pi = 0; pi < pendingChatEvents.length; pi++) {
+        for (let pi = 0; pi < pendingChatEvents.length; pi++) {
           processChatEvent(pendingChatEvents[pi]);
         }
         pendingChatEvents = [];
@@ -2184,14 +2127,19 @@ function connectWs() {
         return;
       }
 
-      // Handle avatar state updates from server (during tool calls)
+      // Handle history sync after reconnect (server pulled missed messages)
+      if (msg.type === 'history_sync') {
+        secureSend(JSON.stringify({ type: 'get_history' }));
+        return;
+      }
+
+      // Handle avatar state updates from server (server is source of truth)
       if (msg.type === 'avatar_state' && window.setAvatarState) {
         setAvatarState(msg.state);
       }
 
       // Handle widget messages
       if (msg.type === 'widget') {
-        console.log('[Widget] Received widget:', msg);
         renderWidget(msg);
         return;
       }
@@ -2203,13 +2151,17 @@ function connectWs() {
         }
         processChatEvent(msg);
       }
+      
+      // Handle user messages from other clients (sync across tabs)
+      if (msg.type === 'user_message') {
+        addMessage(msg.text, 'user', { timestamp: Date.now() });
+      }
     } catch (err) {
       console.error('[WS] Message processing error:', err);
     }
   };
 
   ws.onclose = function(e) {
-    console.log('[WS] Connection closed, code:', e.code, 'reason:', e.reason);
     stopHeartbeat();
     connected = false;
     
@@ -2220,21 +2172,19 @@ function connectWs() {
       
       // Don't reconnect if page is hidden (will reconnect on visibility change)
       if (document.visibilityState !== 'visible') {
-        console.log('[WS] Page hidden, deferring reconnect');
         return;
       }
       
       // Don't reconnect if offline (will reconnect when online)
       if (!navigator.onLine) {
-        console.log('[WS] Offline, deferring reconnect');
         return;
       }
       
       // Exponential backoff with jitter
-      var attempts = 0;
-      var maxAttempts = 15;
-      var baseDelay = 1000;
-      var maxDelay = 60000;
+      let attempts = 0;
+      const maxAttempts = 15;
+      const baseDelay = 1000;
+      const maxDelay = 60000;
       
       function tryReconnect() {
         if (connected) return; // Already reconnected
@@ -2243,19 +2193,17 @@ function connectWs() {
         
         attempts++;
         // Exponential backoff: 1s, 2s, 4s, 8s... capped at 60s
-        var delay = Math.min(baseDelay * Math.pow(2, attempts - 1), maxDelay);
+        let delay = Math.min(baseDelay * Math.pow(2, attempts - 1), maxDelay);
         // Add jitter: ±25% to prevent thundering herd
-        var jitter = delay * 0.25 * (Math.random() * 2 - 1);
+        const jitter = delay * 0.25 * (Math.random() * 2 - 1);
         delay = Math.round(delay + jitter);
         
-        console.log('[WS] Reconnect attempt', attempts + '/' + maxAttempts, 'in', delay + 'ms');
         setStatus('reconnecting');
         
         reconnectTimer = setTimeout(function() {
           reconnectTimer = null;
           if (connected) return;
           
-          console.log('[WS] Attempting reconnect...');
           connectWs();
           
           // Check if reconnect succeeded after connection timeout
@@ -2263,7 +2211,6 @@ function connectWs() {
             if (!connected && attempts < maxAttempts) {
               tryReconnect();
             } else if (!connected) {
-              console.log('[WS] Max reconnect attempts reached');
               setStatus('offline');
               // Don't reload - user can manually refresh or wait for visibility/online event
             }
@@ -2282,8 +2229,8 @@ function connectWs() {
 }
 
 // ─── Connection Stability: Visibility & Freeze Detection ───
-var lastActiveTime = Date.now();
-var visibilityReconnectScheduled = false;
+let lastActiveTime = Date.now();
+let visibilityReconnectScheduled = false;
 
 // Track last activity to detect page freeze (iOS/mobile tab sleeping)
 setInterval(function() {
@@ -2292,10 +2239,9 @@ setInterval(function() {
 
 // Detect page freeze: if gap between intervals is too large, page was frozen
 function checkPageFreeze() {
-  var now = Date.now();
-  var gap = now - lastActiveTime;
+  const now = Date.now();
+  const gap = now - lastActiveTime;
   if (gap > 8000) { // More than 8s gap = page was frozen (interval is 5s)
-    console.log('[WS] Page was frozen for', Math.round(gap / 1000) + 's, checking connection...');
     return true;
   }
   return false;
@@ -2304,15 +2250,13 @@ function checkPageFreeze() {
 // Handle visibility changes (tab switching, screen off, etc.)
 document.addEventListener('visibilitychange', function() {
   if (document.visibilityState === 'visible') {
-    console.log('[WS] Page became visible');
-    var wasFrozen = checkPageFreeze();
+    const wasFrozen = checkPageFreeze();
     lastActiveTime = Date.now();
     
     // If we're supposed to be connected but might have lost connection
     if (sessionToken && chatUi.classList.contains('active')) {
       // Check if WebSocket is still healthy
       if (!ws || ws.readyState !== WebSocket.OPEN) {
-        console.log('[WS] Connection dead after visibility change, reconnecting...');
         if (!visibilityReconnectScheduled) {
           visibilityReconnectScheduled = true;
           setTimeout(function() {
@@ -2325,39 +2269,32 @@ document.addEventListener('visibilitychange', function() {
       } else {
         // Connection looks open - always verify with a ping after visibility change
         // (catches zombie connections from page freeze, network hiccups, etc.)
-        console.log('[WS] Verifying connection after visibility change...');
         try {
           ws.send(JSON.stringify({ type: 'ping' }));
           // Set a timeout - if no pong received, connection is dead
-          var healthCheckTimeout = setTimeout(function() {
-            console.log('[WS] Health check pong timeout - connection dead, reconnecting...');
+          const healthCheckTimeout = setTimeout(function() {
             if (ws) ws.close();
             connectWs();
           }, 5000);
           // Store timeout so pong handler can clear it
           ws._healthCheckTimeout = healthCheckTimeout;
         } catch (e) {
-          console.log('[WS] Health check failed, reconnecting...');
           connectWs();
         }
       }
     }
-  } else {
-    console.log('[WS] Page became hidden');
   }
+  // Hidden state - no action needed, will reconnect on visibility
 });
 
 // Handle online/offline events
 window.addEventListener('online', function() {
-  console.log('[WS] Network came online');
   if (sessionToken && chatUi.classList.contains('active') && !connected) {
-    console.log('[WS] Reconnecting after coming online...');
     setTimeout(connectWs, 1000);
   }
 });
 
 window.addEventListener('offline', function() {
-  console.log('[WS] Network went offline');
   setStatus('offline');
 });
 
@@ -2368,7 +2305,6 @@ setInterval(function() {
       // All good - connection is healthy
     } else if (!connected && !reconnectTimer && !visibilityReconnectScheduled) {
       // Should be connected but isn't, and no reconnect in progress
-      console.log('[WS] Health check: not connected, triggering reconnect');
       connectWs();
     }
   }
@@ -2379,21 +2315,22 @@ function send() {
     sendWithAttachments();
     return;
   }
-  var text = inputEl.value.trim();
+  const text = inputEl.value.trim();
   if (!text || !connected) return;
 
-  var msgOpts = { timestamp: Date.now() };
+  const msgOpts = { timestamp: Date.now() };
   if (replyTarget) {
     msgOpts.replyTo = { sender: replyTarget.sender, text: replyTarget.text, bubbleEl: replyTarget.bubbleEl };
   }
   addMessage(text, 'user', msgOpts);
   showTyping();
+  // Set thinking locally for instant feedback (server will broadcast authoritatively)
   if (window.setAvatarState) setAvatarState('thinking');
 
-  var sendText = text;
+  let sendText = text;
   if (replyTarget) {
-    var quoteSender = replyTarget.sender === 'bot' ? CFG.botName : 'You';
-    var quoteSnippet = replyTarget.text.length > 150 ? replyTarget.text.slice(0, 150) + '…' : replyTarget.text;
+    const quoteSender = replyTarget.sender === 'bot' ? CFG.botName : 'You';
+    const quoteSnippet = replyTarget.text.length > 150 ? replyTarget.text.slice(0, 150) + '…' : replyTarget.text;
     sendText = '> ' + quoteSender + ': ' + quoteSnippet + '\n\n' + text;
   }
   // Cancel any playing/queued TTS from previous reply
@@ -2409,10 +2346,10 @@ function send() {
 
 // ─── Input handlers ───
 // Save draft to localStorage to prevent loss on refresh/disconnect
-var DRAFT_KEY = 'clawtime_draft';
+const DRAFT_KEY = 'clawtime_draft';
 
 function saveDraft() {
-  var text = inputEl.value;
+  const text = inputEl.value;
   if (text) {
     localStorage.setItem(DRAFT_KEY, text);
   } else {
@@ -2421,7 +2358,7 @@ function saveDraft() {
 }
 
 function restoreDraft() {
-  var draft = localStorage.getItem(DRAFT_KEY);
+  const draft = localStorage.getItem(DRAFT_KEY);
   if (draft) {
     inputEl.value = draft;
     inputEl.style.height = 'auto';
@@ -2454,48 +2391,48 @@ inputEl.addEventListener('keydown', function(e) {
 sendBtn.addEventListener('click', function() { send(); });
 
 // ─── Image Upload & Camera ───
-var attachBtn = document.getElementById('attachBtn');
-var attachMenu = document.getElementById('attachMenu');
-var attachFileBtn = document.getElementById('attachFile');
-var attachCameraBtn = document.getElementById('attachCamera');
-var fileInput = document.getElementById('fileInput');
-var cameraFileInput = document.getElementById('cameraFileInput');
-var imagePreview = document.getElementById('imagePreview');
-var previewImg = document.getElementById('previewImg');
-var previewInfo = document.getElementById('previewInfo');
-var previewCancel = document.getElementById('previewCancel');
-var dragOverlay = document.getElementById('dragOverlay');
-var cameraModal = document.getElementById('cameraModal');
-var cameraVideo = document.getElementById('cameraVideo');
-var cameraPreviewImg = document.getElementById('cameraPreviewImg');
-var cameraControls = document.getElementById('cameraControls');
-var cameraReviewControls = document.getElementById('cameraReviewControls');
-var camCloseBtn = document.getElementById('camCloseBtn');
-var camCaptureBtn = document.getElementById('camCaptureBtn');
-var camRetakeBtn = document.getElementById('camRetakeBtn');
-var camUseBtn = document.getElementById('camUseBtn');
+const attachBtn = document.getElementById('attachBtn');
+const attachMenu = document.getElementById('attachMenu');
+const attachFileBtn = document.getElementById('attachFile');
+const attachCameraBtn = document.getElementById('attachCamera');
+const fileInput = document.getElementById('fileInput');
+const cameraFileInput = document.getElementById('cameraFileInput');
+const imagePreview = document.getElementById('imagePreview');
+const previewImg = document.getElementById('previewImg');
+const previewInfo = document.getElementById('previewInfo');
+const previewCancel = document.getElementById('previewCancel');
+const dragOverlay = document.getElementById('dragOverlay');
+const cameraModal = document.getElementById('cameraModal');
+const cameraVideo = document.getElementById('cameraVideo');
+const cameraPreviewImg = document.getElementById('cameraPreviewImg');
+const cameraControls = document.getElementById('cameraControls');
+const cameraReviewControls = document.getElementById('cameraReviewControls');
+const camCloseBtn = document.getElementById('camCloseBtn');
+const camCaptureBtn = document.getElementById('camCaptureBtn');
+const camRetakeBtn = document.getElementById('camRetakeBtn');
+const camUseBtn = document.getElementById('camUseBtn');
 
-var cameraStream = null;
-var capturedImageBase64 = null;
+let cameraStream = null;
+let capturedImageBase64 = null;
 
 function processFile(file) {
   return new Promise(function(resolve, reject) {
-    var reader = new FileReader();
+    const reader = new FileReader();
     reader.onload = function(e) {
-      var dataUrl = e.target.result;
-      var base64 = dataUrl.split(',')[1];
-      var type = file.type || 'application/octet-stream';
+      let dataUrl = e.target.result;
+      let base64 = dataUrl.split(',')[1];
+      let type = file.type || 'application/octet-stream';
       
       // For images, optionally resize large ones
       if (type.startsWith('image/')) {
-        var img = new Image();
+        const img = new Image();
         img.onload = function() {
-          var MAX = 1920;
-          var w = img.width, h = img.height;
+          const MAX = 1920;
+          let w = img.width, h = img.height;
           if (w > MAX || h > MAX) {
             if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
             else { w = Math.round(w * MAX / h); h = MAX; }
-            var canvas = document.createElement('canvas');
+            const canvas = document.createElement('canvas');
             canvas.width = w;
             canvas.height = h;
             canvas.getContext('2d').drawImage(img, 0, 0, w, h);
@@ -2539,8 +2476,8 @@ function renderAttachmentPreview() {
   
   imagePreview.classList.add('active');
   imagePreview.innerHTML = pendingAttachments.map(function(att, i) {
-    var isImage = att.type && att.type.startsWith('image/');
-    var preview = isImage 
+    const isImage = att.type && att.type.startsWith('image/');
+    const preview = isImage 
       ? '<img src="' + att.dataUrl + '" style="max-height:60px;max-width:80px;border-radius:6px;object-fit:cover">'
       : '<div style="width:50px;height:50px;background:#333;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:20px">📎</div>';
     return '<div style="position:relative;display:inline-block;margin:4px">' +
@@ -2568,7 +2505,7 @@ attachFileBtn.addEventListener('click', function() {
 });
 
 attachCameraBtn.addEventListener('click', function() {
-  var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   if (isMobile) {
     cameraFileInput.click();
   } else {
@@ -2584,11 +2521,11 @@ document.addEventListener('click', function(e) {
 });
 
 fileInput.addEventListener('change', async function(e) {
-  var files = e.target.files;
+  const files = e.target.files;
   if (!files || files.length === 0) return;
-  for (var i = 0; i < files.length; i++) {
+  for (let i = 0; i < files.length; i++) {
     try {
-      var result = await processFile(files[i]);
+      const result = await processFile(files[i]);
       addAttachment(result);
     } catch (err) { console.error('Failed to process file:', err); }
   }
@@ -2597,7 +2534,7 @@ fileInput.addEventListener('change', async function(e) {
 
 previewCancel.addEventListener('click', clearAttachments);
 
-var dragCounter = 0;
+let dragCounter = 0;
 
 messagesEl.addEventListener('dragenter', function(e) {
   e.preventDefault();
@@ -2617,23 +2554,23 @@ messagesEl.addEventListener('drop', async function(e) {
   e.preventDefault();
   dragCounter = 0;
   dragOverlay.classList.remove('active');
-  var files = e.dataTransfer.files;
+  const files = e.dataTransfer.files;
   if (!files || files.length === 0) return;
-  for (var i = 0; i < files.length; i++) {
+  for (let i = 0; i < files.length; i++) {
     try {
-      var result = await processFile(files[i]);
+      const result = await processFile(files[i]);
       addAttachment(result);
     } catch (err) { console.error('Failed to process file:', err); }
   }
 });
 
 cameraFileInput.addEventListener('change', async function(e) {
-  var file = e.target.files[0];
+  const file = e.target.files[0];
   if (!file) return;
   try {
-    var result = await processFile(file);
+    const result = await processFile(file);
     addAttachment(result);
-  } catch (err) {}
+  } catch (_err) { /* ignore */ }
   cameraFileInput.value = '';
 });
 
@@ -2666,15 +2603,15 @@ function closeCamera() {
 camCloseBtn.addEventListener('click', closeCamera);
 
 camCaptureBtn.addEventListener('click', function() {
-  var canvas = document.createElement('canvas');
+  const canvas = document.createElement('canvas');
   canvas.width = cameraVideo.videoWidth;
   canvas.height = cameraVideo.videoHeight;
   canvas.getContext('2d').drawImage(cameraVideo, 0, 0);
 
-  var MAX = 1920;
-  var w = canvas.width, h = canvas.height;
+  const MAX = 1920;
+  let w = canvas.width, h = canvas.height;
   if (w > MAX || h > MAX) {
-    var resized = document.createElement('canvas');
+    const resized = document.createElement('canvas');
     if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
     else { w = Math.round(w * MAX / h); h = MAX; }
     resized.width = w;
@@ -2714,22 +2651,23 @@ camUseBtn.addEventListener('click', function() {
 });
 
 function sendWithAttachments() {
-  var text = inputEl.value.trim();
-  var hasAttachments = pendingAttachments.length > 0;
-  var hasText = !!text;
+  const text = inputEl.value.trim();
+  const hasAttachments = pendingAttachments.length > 0;
+  const hasText = !!text;
 
   if (!connected || (!hasText && !hasAttachments)) return;
 
-  var msgOpts = { timestamp: Date.now() };
+  const msgOpts = { timestamp: Date.now() };
   if (replyTarget) {
     msgOpts.replyTo = { sender: replyTarget.sender, text: replyTarget.text, bubbleEl: replyTarget.bubbleEl };
   }
 
   // Show user message with attachments
   if (hasAttachments) {
-    var firstImage = pendingAttachments.find(function(a) { return a.type && a.type.startsWith('image/'); });
-    if (firstImage) {
-      addImageMessage(text, 'user', firstImage.dataUrl);
+    const imageAttachments = pendingAttachments.filter(function(a) { return a.type && a.type.startsWith('image/'); });
+    if (imageAttachments.length > 0) {
+      const imageUrls = imageAttachments.map(function(a) { return a.dataUrl; });
+      addImageMessage(text, 'user', imageUrls, msgOpts);
     } else {
       addMessage(text + ' [' + pendingAttachments.length + ' attachment(s)]', 'user', msgOpts);
     }
@@ -2740,16 +2678,16 @@ function sendWithAttachments() {
   showTyping();
   if (window.setAvatarState) setAvatarState('thinking');
 
-  var sendText = text;
+  let sendText = text;
   if (replyTarget) {
-    var quoteSender = replyTarget.sender === 'bot' ? CFG.botName : 'You';
-    var quoteSnippet = replyTarget.text.length > 150 ? replyTarget.text.slice(0, 150) + '…' : replyTarget.text;
+    const quoteSender = replyTarget.sender === 'bot' ? CFG.botName : 'You';
+    const quoteSnippet = replyTarget.text.length > 150 ? replyTarget.text.slice(0, 150) + '…' : replyTarget.text;
     sendText = '> ' + quoteSender + ': ' + quoteSnippet + '\n\n' + text;
   }
 
   if (hasAttachments) {
     // Send attachments with message
-    var attachmentData = pendingAttachments.map(function(a) {
+    const attachmentData = pendingAttachments.map(function(a) {
       return { data: a.base64, name: a.name, type: a.type };
     });
     secureSend(JSON.stringify({ type: 'attachments', attachments: attachmentData, caption: sendText || '' }));
@@ -2764,37 +2702,41 @@ function sendWithAttachments() {
   clearDraft();
 }
 
-function addImageMessage(caption, sender, imageDataUrl, opts) {
+function addImageMessage(caption, sender, imageDataUrlOrArray, opts) {
   opts = opts || {};
-  var welcome = messagesEl.querySelector('.welcome');
+  const welcome = messagesEl.querySelector('.welcome');
   if (welcome) welcome.remove();
 
-  var div = document.createElement('div');
+  const div = document.createElement('div');
   div.className = 'message ' + sender;
 
-  var avatar = document.createElement('div');
+  const avatar = document.createElement('div');
   avatar.className = 'msg-avatar';
   avatar.textContent = sender === 'bot' ? CFG.botEmoji : '👤';
 
-  var bubble = document.createElement('div');
+  const bubble = document.createElement('div');
   bubble.className = 'bubble';
 
   if (caption) {
-    var textNode = document.createElement('div');
+    const textNode = document.createElement('div');
     textNode.textContent = caption;
     bubble.appendChild(textNode);
   }
 
-  var img = document.createElement('img');
-  img.className = 'chat-image';
-  img.src = imageDataUrl;
-  img.alt = 'Shared image';
-  img.onclick = function() { window.open(imageDataUrl, '_blank'); };
-  bubble.appendChild(img);
+  // Support single image or array of images
+  const images = Array.isArray(imageDataUrlOrArray) ? imageDataUrlOrArray : [imageDataUrlOrArray];
+  images.forEach(function(imageDataUrl) {
+    const img = document.createElement('img');
+    img.className = 'chat-image';
+    img.src = imageDataUrl;
+    img.alt = 'Shared image';
+    img.onclick = function() { window.open(imageDataUrl, '_blank'); };
+    bubble.appendChild(img);
+  });
 
-  var timeEl = document.createElement('span');
+  const timeEl = document.createElement('span');
   timeEl.className = 'msg-time';
-  var ts = opts.timestamp ? new Date(opts.timestamp) : new Date();
+  const ts = opts.timestamp ? new Date(opts.timestamp) : new Date();
   timeEl.textContent = ts.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   bubble.appendChild(timeEl);
 
@@ -2819,12 +2761,12 @@ function addImageMessage(caption, sender, imageDataUrl, opts) {
 // replaces the page and there's no back button to return to the chat.
 // The overlay provides a Close button and a Download button, keeping
 // the chat session intact.
-var fileViewer = document.getElementById('fileViewer');
-var fvFrame = document.getElementById('fvFrame');
-var fvTitle = document.getElementById('fvTitle');
-var fvClose = document.getElementById('fvClose');
-var fvDownload = document.getElementById('fvDownload');
-var fvCurrentUrl = '';
+const fileViewer = document.getElementById('fileViewer');
+const fvFrame = document.getElementById('fvFrame');
+const fvTitle = document.getElementById('fvTitle');
+const fvClose = document.getElementById('fvClose');
+const fvDownload = document.getElementById('fvDownload');
+let fvCurrentUrl = '';
 
 window.openFileViewer = function(url, filename) {
   fvCurrentUrl = url;
@@ -2839,7 +2781,7 @@ fvClose.addEventListener('click', function() {
 });
 
 fvDownload.addEventListener('click', function() {
-  var a = document.createElement('a');
+  const a = document.createElement('a');
   a.href = fvCurrentUrl;
   a.download = fvTitle.textContent || 'file';
   document.body.appendChild(a);
@@ -2858,32 +2800,32 @@ fvDownload.addEventListener('click', function() {
 // DECISION: Swipe-left-to-cancel — dragging left > 80px while holding the
 // PTT removed — voice mode toggle handles voice input now
 // Keep variables to avoid reference errors in any remaining code
-var pttBtn = document.createElement('div'); // dummy element
-var pttRecording = false;
-var pttCancelled = false;
-var pttStartX = 0;
-var pttStartY = 0;
-var PTT_CANCEL_DIST = 80; // pixels to drag before cancelling
-var pttRecognition = null;
-var pttBubble = null;
-var pttFinalText = '';
-var pttLastTranscript = '';
+const pttBtn = document.createElement('div'); // dummy element
+let pttRecording = false;
+let pttCancelled = false;
+let pttStartX = 0;
+let pttStartY = 0;
+const PTT_CANCEL_DIST = 80; // pixels to drag before cancelling
+let pttRecognition = null;
+let pttBubble = null;
+let pttFinalText = '';
+let pttLastTranscript = '';
 
-var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-var pttMicStream = null; // Keep mic stream alive to persist permission
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let pttMicStream = null; // Keep mic stream alive to persist permission
 
 // ── Adaptive STT: Browser vs Whisper based on noise level ──
 // DECISION: Measure ambient noise for ~200ms when PTT starts. If noise RMS
 // exceeds threshold, record audio and send to server-side Whisper (more
 // accurate in noise). Otherwise, use browser SpeechRecognition (faster,
 // real-time feedback). This gives best of both worlds automatically.
-var pttUsingWhisper = false;
-var pttMediaRecorder = null;
-var pttAudioChunks = [];
-var pttAudioContext = null;
-var pttAnalyser = null;
-var PTT_NOISE_THRESHOLD = 1.0; // RMS threshold — set to 1.0 to always use browser Web Speech API (no Whisper)
-var PTT_NOISE_SAMPLE_MS = 150; // How long to sample noise before deciding
+let pttUsingWhisper = false;
+let pttMediaRecorder = null;
+let pttAudioChunks = [];
+let pttAudioContext = null;
+let pttAnalyser = null;
+const PTT_NOISE_THRESHOLD = 1.0; // RMS threshold — set to 1.0 to always use browser Web Speech API (no Whisper)
+const PTT_NOISE_SAMPLE_MS = 150; // How long to sample noise before deciding
 
 function pttEnsureMicPermission() {
   if (pttMicStream) return Promise.resolve(pttMicStream);
@@ -2906,24 +2848,24 @@ function pttMeasureNoise(stream, durationMs) {
       if (!pttAudioContext) {
         pttAudioContext = new (window.AudioContext || window.webkitAudioContext)();
       }
-      var source = pttAudioContext.createMediaStreamSource(stream);
+      const source = pttAudioContext.createMediaStreamSource(stream);
       pttAnalyser = pttAudioContext.createAnalyser();
       pttAnalyser.fftSize = 2048;
       source.connect(pttAnalyser);
       
-      var samples = [];
-      var dataArray = new Float32Array(pttAnalyser.fftSize);
-      var sampleInterval = 50; // sample every 50ms
-      var elapsed = 0;
+      const samples = [];
+      const dataArray = new Float32Array(pttAnalyser.fftSize);
+      const sampleInterval = 50; // sample every 50ms
+      let elapsed = 0;
       
-      var sampler = setInterval(function() {
+      const sampler = setInterval(function() {
         pttAnalyser.getFloatTimeDomainData(dataArray);
         // Calculate RMS (root mean square) of the signal
-        var sum = 0;
-        for (var i = 0; i < dataArray.length; i++) {
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
           sum += dataArray[i] * dataArray[i];
         }
-        var rms = Math.sqrt(sum / dataArray.length);
+        const rms = Math.sqrt(sum / dataArray.length);
         samples.push(rms);
         elapsed += sampleInterval;
         
@@ -2931,7 +2873,7 @@ function pttMeasureNoise(stream, durationMs) {
           clearInterval(sampler);
           source.disconnect();
           // Return average RMS across samples
-          var avgRms = samples.reduce(function(a, b) { return a + b; }, 0) / samples.length;
+          const avgRms = samples.reduce(function(a, b) { return a + b; }, 0) / samples.length;
           resolve(avgRms);
         }
       }, sampleInterval);
@@ -2945,7 +2887,7 @@ function pttMeasureNoise(stream, durationMs) {
 // Start MediaRecorder for Whisper path
 function pttStartWhisperRecording(stream) {
   pttAudioChunks = [];
-  var options = { mimeType: 'audio/webm;codecs=opus' };
+  let options = { mimeType: 'audio/webm;codecs=opus' };
   if (!MediaRecorder.isTypeSupported(options.mimeType)) {
     options = { mimeType: 'audio/webm' };
     if (!MediaRecorder.isTypeSupported(options.mimeType)) {
@@ -2967,9 +2909,9 @@ function pttStartBrowserRecognition() {
   pttRecognition.lang = 'en-US';
 
   pttRecognition.onresult = function(e) {
-    var interim = '';
-    var final = '';
-    for (var i = 0; i < e.results.length; i++) {
+    let interim = '';
+    let final = '';
+    for (let i = 0; i < e.results.length; i++) {
       if (e.results[i].isFinal) {
         final += e.results[i][0].transcript;
       } else {
@@ -2977,7 +2919,7 @@ function pttStartBrowserRecognition() {
       }
     }
     pttFinalText = final;
-    var display = (final + interim).trim() || '🎤 Listening...';
+    const display = (final + interim).trim() || '🎤 Listening...';
     pttLastTranscript = (final + interim).trim();
     if (pttBubble) {
       pttBubble.bubble.textContent = display;
@@ -2992,7 +2934,7 @@ function pttStartBrowserRecognition() {
   pttRecognition.onend = function() {
     // Recognition ended (browser may stop it) — if still recording, restart
     if (pttRecording && pttRecognition && !pttUsingWhisper) {
-      try { pttRecognition.start(); } catch(e) {}
+      try { pttRecognition.start(); } catch(_e) { /* ignore */ }
     }
   };
 
@@ -3021,14 +2963,14 @@ function pttStart() {
   }
 
   // Create live transcription bubble
-  var welcome = messagesEl.querySelector('.welcome');
+  const welcome = messagesEl.querySelector('.welcome');
   if (welcome) welcome.remove();
-  var div = document.createElement('div');
+  const div = document.createElement('div');
   div.className = 'message user';
-  var avatar = document.createElement('div');
+  const avatar = document.createElement('div');
   avatar.className = 'msg-avatar';
   avatar.textContent = '👤';
-  var bubble = document.createElement('div');
+  const bubble = document.createElement('div');
   bubble.className = 'bubble';
   bubble.style.opacity = '0.6';
   bubble.style.fontStyle = 'italic';
@@ -3077,11 +3019,11 @@ function pttStop() {
     if (pttRecognition) {
       pttRecognition.onend = null;
       pttRecognition.onresult = null;
-      try { pttRecognition.stop(); } catch(e) {}
+      try { pttRecognition.stop(); } catch(_e) { /* ignore */ }
       pttRecognition = null;
     }
     if (pttMediaRecorder && pttMediaRecorder.state !== 'inactive') {
-      try { pttMediaRecorder.stop(); } catch(e) {}
+      try { pttMediaRecorder.stop(); } catch(_e) { /* ignore */ }
       pttMediaRecorder = null;
     }
     pttAudioChunks = [];
@@ -3091,20 +3033,19 @@ function pttStop() {
     return;
   }
 
-  var savedBubble = pttBubble;
+  const savedBubble = pttBubble;
   pttBubble = null;
 
   if (pttUsingWhisper) {
     // ── Whisper path: stop recording, send audio to server ──
     if (pttMediaRecorder && pttMediaRecorder.state !== 'inactive') {
       pttMediaRecorder.onstop = function() {
-        var blob = new Blob(pttAudioChunks, { type: pttMediaRecorder.mimeType || 'audio/webm' });
+        const blob = new Blob(pttAudioChunks, { type: pttMediaRecorder.mimeType || 'audio/webm' });
         pttAudioChunks = [];
         pttMediaRecorder = null;
         
         if (blob.size < 1000) {
           // Too short, probably just noise
-          console.log('PTT: Audio too short, discarding');
           if (savedBubble) savedBubble.div.remove();
           pttUsingWhisper = false;
           return;
@@ -3117,22 +3058,22 @@ function pttStop() {
         }
         
         // Convert blob to base64 and send to server
-        var reader = new FileReader();
+        const reader = new FileReader();
         reader.onloadend = function() {
-          var base64data = reader.result.split(',')[1];
+          const base64data = reader.result.split(',')[1];
           secureSend(JSON.stringify({ type: 'audio', data: base64data }));
         };
         reader.readAsDataURL(blob);
         
         // Listen for transcription result
-        var transcriptionHandler = function(e) {
+        const transcriptionHandler = function(e) {
           try {
-            var rawStr = e.data;
+            let rawStr = e.data;
             // Decrypt if E2E is active
             if (window._e2eReady && window._e2eDecrypt) {
               rawStr = window._e2eDecrypt(rawStr);
             }
-            var msg = JSON.parse(rawStr);
+            const msg = JSON.parse(rawStr);
             if (msg.type === 'transcription') {
               ws.removeEventListener('message', transcriptionHandler);
               if (savedBubble) savedBubble.div.remove();
@@ -3150,7 +3091,7 @@ function pttStop() {
               if (savedBubble) savedBubble.div.remove();
               pttUsingWhisper = false;
             }
-          } catch(err) {}
+          } catch(_err) { /* ignore parse errors */ }
         };
         ws.addEventListener('message', transcriptionHandler);
         
@@ -3163,7 +3104,7 @@ function pttStop() {
           pttUsingWhisper = false;
         }, 15000);
       };
-      try { pttMediaRecorder.stop(); } catch(e) {}
+      try { pttMediaRecorder.stop(); } catch(_e) { /* ignore */ }
     } else {
       if (savedBubble) savedBubble.div.remove();
       pttUsingWhisper = false;
@@ -3172,13 +3113,13 @@ function pttStop() {
     // ── Browser recognition path: wait for final result ──
     if (pttRecognition) {
       pttRecognition.onend = null;
-      try { pttRecognition.stop(); } catch(e) {}
+      try { pttRecognition.stop(); } catch(_e) { /* ignore */ }
     }
 
     // Wait briefly for final result to arrive
     setTimeout(function() {
       pttRecognition = null;
-      var text = pttLastTranscript || '';
+      const text = pttLastTranscript || '';
       pttLastTranscript = '';
 
       if (!text) {
@@ -3198,7 +3139,7 @@ function pttStop() {
 }
 
 function pttCheckCancel(clientX, clientY) {
-  var dx = pttStartX - clientX; // positive = swiped left
+  const dx = pttStartX - clientX; // positive = swiped left
   if (dx > PTT_CANCEL_DIST && pttRecording) {
     // Immediately cancel on swipe
     pttCancelled = true;
@@ -3209,7 +3150,7 @@ function pttCheckCancel(clientX, clientY) {
 // Touch events (mobile)
 pttBtn.addEventListener('touchstart', function(e) {
   e.preventDefault();
-  var touch = e.touches[0];
+  const touch = e.touches[0];
   pttStartX = touch.clientX;
   pttStartY = touch.clientY;
   pttCancelled = false;
@@ -3217,7 +3158,7 @@ pttBtn.addEventListener('touchstart', function(e) {
 }, { passive: false });
 document.addEventListener('touchmove', function(e) {
   if (!pttRecording) return;
-  var touch = e.touches[0];
+  const touch = e.touches[0];
   pttCheckCancel(touch.clientX, touch.clientY);
 }, { passive: true });
 document.addEventListener('touchend', function(e) {
@@ -3245,21 +3186,21 @@ document.addEventListener('mousemove', function(e) {
 document.addEventListener('mouseup', function() { if (pttRecording) pttStop(); });
 
 // ─── Draggable Separator ───
-var avatarPanel = document.getElementById('avatarPanel');
-var dragSeparator = document.getElementById('dragSeparator');
-var MOBILE_BP = 768;
+const avatarPanel = document.getElementById('avatarPanel');
+const dragSeparator = document.getElementById('dragSeparator');
+const MOBILE_BP = 768;
 
 function isMobileLayout() { return window.innerWidth <= MOBILE_BP; }
 
 function initSeparator() {
   if (!CFG.enableAvatar) return;
   if (isMobileLayout()) {
-    var saved = localStorage.getItem('clawtime_avatar_height');
-    var h = saved ? parseInt(saved) : 200;
+    const saved = localStorage.getItem('clawtime_avatar_height');
+    const h = saved ? parseInt(saved) : 200;
     avatarPanel.style.height = Math.max(80, Math.min(h, window.innerHeight * 0.6)) + 'px';
   } else {
-    var saved = localStorage.getItem('clawtime_avatar_width');
-    var w = saved ? parseFloat(saved) : 40;
+    const saved = localStorage.getItem('clawtime_avatar_width');
+    const w = saved ? parseFloat(saved) : 40;
     avatarPanel.style.width = Math.max(20, Math.min(w, 60)) + '%';
   }
 
@@ -3268,9 +3209,9 @@ function initSeparator() {
   }, 100);
 }
 
-var sepDragging = false;
-var sepStartPos = 0;
-var sepStartSize = 0;
+let sepDragging = false;
+let sepStartPos = 0;
+let sepStartSize = 0;
 
 function sepStartDrag(e) {
   if (!CFG.enableAvatar) return;
@@ -3280,7 +3221,7 @@ function sepStartDrag(e) {
   document.body.style.userSelect = 'none';
   document.body.style.webkitUserSelect = 'none';
 
-  var pos = e.touches ? e.touches[0] : e;
+  const pos = e.touches ? e.touches[0] : e;
   sepStartPos = isMobileLayout() ? pos.clientY : pos.clientX;
   sepStartSize = isMobileLayout() ? avatarPanel.offsetHeight : avatarPanel.offsetWidth;
 
@@ -3290,23 +3231,23 @@ function sepStartDrag(e) {
   document.addEventListener('touchend', sepEndDrag);
 }
 
-var sepRafPending = false;
+let sepRafPending = false;
 function sepOnDrag(e) {
   if (!sepDragging) return;
   e.preventDefault();
 
-  var pos = e.touches ? e.touches[0] : e;
-  var current = isMobileLayout() ? pos.clientY : pos.clientX;
-  var delta = current - sepStartPos;
+  const pos = e.touches ? e.touches[0] : e;
+  const current = isMobileLayout() ? pos.clientY : pos.clientX;
+  const delta = current - sepStartPos;
 
   if (isMobileLayout()) {
-    var newH = Math.max(80, Math.min(sepStartSize + delta, window.innerHeight * 0.6));
+    const newH = Math.max(80, Math.min(sepStartSize + delta, window.innerHeight * 0.6));
     avatarPanel.style.height = newH + 'px';
     localStorage.setItem('clawtime_avatar_height', Math.round(newH));
   } else {
-    var containerW = chatUi.offsetWidth;
-    var newW = ((sepStartSize + delta) / containerW) * 100;
-    var clamped = Math.max(20, Math.min(newW, 60));
+    const containerW = chatUi.offsetWidth;
+    const newW = ((sepStartSize + delta) / containerW) * 100;
+    const clamped = Math.max(20, Math.min(newW, 60));
     avatarPanel.style.width = clamped + '%';
     localStorage.setItem('clawtime_avatar_width', clamped.toFixed(1));
   }
@@ -3359,17 +3300,17 @@ window.addEventListener('resize', function() {
 
 window.callActive = false;
 window.voiceMode = false;
-var callRecognition = null;
-var callPlaying = false;
+let callRecognition = null;
+let callPlaying = false;
 
 // Echo detection threshold for barge-in during TTS
-var ECHO_CONFIDENCE_THRESHOLD = 0.88; // Balance between barge-in sensitivity and echo rejection
+const ECHO_CONFIDENCE_THRESHOLD = 0.88; // Balance between barge-in sensitivity and echo rejection
 
 // Check browser support for SpeechRecognition
-var SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 // ── Create call overlay UI ──
-var callOverlay = document.createElement('div');
+const callOverlay = document.createElement('div');
 callOverlay.id = 'callOverlay';
 callOverlay.innerHTML = '' +
   '<div class="call-ring-container">' +
@@ -3387,12 +3328,12 @@ callOverlay.innerHTML = '' +
   '<button class="call-end-btn" id="callEndBtn">✕</button>';
 
 // Whisper mode state for voice calls
-var callUseWhisper = false; // Browser STT by default (set true for server-side Whisper)
+const callUseWhisper = false; // Browser STT by default (set true for server-side Whisper)
 
 // Element references for avatar panel interactions
-var avatarPanelEl = document.getElementById('avatarPanel');
-var chatMainEl = document.querySelector('.chat-main');
-var dragSeparatorEl = document.getElementById('dragSeparator');
+const avatarPanelEl = document.getElementById('avatarPanel');
+const chatMainEl = document.querySelector('.chat-main');
+const dragSeparatorEl = document.getElementById('dragSeparator');
 
 // Append overlay to avatar panel (positioned at bottom)
 if (avatarPanelEl) avatarPanelEl.appendChild(callOverlay);
@@ -3402,7 +3343,7 @@ if (avatarPanelEl) avatarPanelEl.appendChild(callOverlay);
 
 // ── Start call ──
 // Web Audio API — unlocked on user gesture, used for TTS playback
-var audioCtx = null;
+let audioCtx = null;
 
 function unlockAudioContext() {
   if (!audioCtx) {
@@ -3412,21 +3353,21 @@ function unlockAudioContext() {
     audioCtx.resume();
   }
   // Play silent buffer to fully unlock
-  var buf = audioCtx.createBuffer(1, 1, 22050);
-  var src = audioCtx.createBufferSource();
+  const buf = audioCtx.createBuffer(1, 1, 22050);
+  const src = audioCtx.createBufferSource();
   src.buffer = buf;
   src.connect(audioCtx.destination);
   src.start(0);
 }
 
-var activeTTSSource = null;
-var activeTTSRunId = null; // Track which runId is currently being spoken
+let activeTTSSource = null;
+let activeTTSRunId = null; // Track which runId is currently being spoken
 
 function playTTSAudio(data, onDone) {
   // data can be an ArrayBuffer (from E2E WS) or a URL string (legacy)
   // Stop any currently playing
   if (activeTTSSource) {
-    try { activeTTSSource.stop(); } catch(e) {}
+    try { activeTTSSource.stop(); } catch(_e) { /* ignore */ }
     activeTTSSource = null;
   }
   if (window._ttsAudioEl) {
@@ -3434,11 +3375,11 @@ function playTTSAudio(data, onDone) {
     window._ttsAudioEl = null;
   }
 
-  var isBuffer = data instanceof ArrayBuffer;
+  const isBuffer = data instanceof ArrayBuffer;
 
   // Ensure AudioContext exists
   if (!audioCtx) {
-    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(_e) { /* ignore */ }
   }
   if (audioCtx && audioCtx.state === 'suspended') {
     audioCtx.resume().catch(function() {});
@@ -3447,7 +3388,7 @@ function playTTSAudio(data, onDone) {
   if (audioCtx && isBuffer) {
     // Direct ArrayBuffer → decodeAudioData (no fetch needed, iOS-safe)
     audioCtx.decodeAudioData(data.slice(0), function(buffer) {
-      var source = audioCtx.createBufferSource();
+      const source = audioCtx.createBufferSource();
       source.buffer = buffer;
       source.connect(audioCtx.destination);
       activeTTSSource = source;
@@ -3456,7 +3397,7 @@ function playTTSAudio(data, onDone) {
     }, function(err) {
       console.error('[TTS] decode failed:', err);
       // Fallback: create blob URL and use Audio element
-      var blob = new Blob([new Uint8Array(data)], { type: 'audio/mpeg' });
+      const blob = new Blob([new Uint8Array(data)], { type: 'audio/mpeg' });
       playTTSFallback(URL.createObjectURL(blob), onDone);
     });
   } else if (audioCtx && audioCtx.state === 'running' && !isBuffer) {
@@ -3464,7 +3405,7 @@ function playTTSAudio(data, onDone) {
       .then(function(r) { return r.arrayBuffer(); })
       .then(function(ab) { return audioCtx.decodeAudioData(ab); })
       .then(function(buffer) {
-        var source = audioCtx.createBufferSource();
+        const source = audioCtx.createBufferSource();
         source.buffer = buffer;
         source.connect(audioCtx.destination);
         activeTTSSource = source;
@@ -3474,7 +3415,7 @@ function playTTSAudio(data, onDone) {
       .catch(function() { playTTSFallback(data, onDone); });
   } else if (isBuffer) {
     // No AudioContext — fallback with blob URL
-    var blob = new Blob([new Uint8Array(data)], { type: 'audio/mpeg' });
+    const blob = new Blob([new Uint8Array(data)], { type: 'audio/mpeg' });
     playTTSFallback(URL.createObjectURL(blob), onDone);
   } else {
     playTTSFallback(data, onDone);
@@ -3482,7 +3423,7 @@ function playTTSAudio(data, onDone) {
 }
 
 function playTTSFallback(url, onDone) {
-  var audio = new Audio(url);
+  const audio = new Audio(url);
   window._ttsAudioEl = audio;
   audio.onended = function() { window._ttsAudioEl = null; if (onDone) onDone(); };
   audio.onerror = function() { window._ttsAudioEl = null; if (onDone) onDone(); };
@@ -3490,11 +3431,11 @@ function playTTSFallback(url, onDone) {
 }
 
 // ─── Server-side STT fallback (MediaRecorder) ───
-var mediaRecorder = null;
-var mediaStream = null;
-var recordingChunks = [];
-var analyserNode = null;
-var sttActive = false;
+let mediaRecorder = null;
+let mediaStream = null;
+let recordingChunks = [];
+let analyserNode = null;
+let sttActive = false;
 
 function startMediaRecorderSTT() {
   // Only start Whisper STT when enabled or browser STT unavailable
@@ -3511,7 +3452,7 @@ function startMediaRecorderSTT() {
 
     // Set up audio analyser for silence detection
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    var source = audioCtx.createMediaStreamSource(stream);
+    const source = audioCtx.createMediaStreamSource(stream);
     analyserNode = audioCtx.createAnalyser();
     analyserNode.fftSize = 512;
     source.connect(analyserNode);
@@ -3525,9 +3466,9 @@ function startMediaRecorderSTT() {
 }
 
 function startRecordingChunk() {
-  if (!sttActive || !mediaStream || !callActive) return;
+  if (!sttActive || !mediaStream || !window.callActive) return;
   recordingChunks = [];
-  var mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' :
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' :
                  MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' :
                  MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '';
   mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType: mimeType } : {});
@@ -3535,32 +3476,32 @@ function startRecordingChunk() {
     if (e.data.size > 0) recordingChunks.push(e.data);
   };
   mediaRecorder.onstop = function() {
-    if (recordingChunks.length === 0 || !callActive) return;
+    if (recordingChunks.length === 0 || !window.callActive) return;
     // Discard audio if TTS was playing (avoid echo) — but barge-in already stopped TTS
     if (callPlaying) {
-      if (sttActive && callActive) setTimeout(startRecordingChunk, 300);
+      if (sttActive && window.callActive) setTimeout(startRecordingChunk, 300);
       return;
     }
-    var blob = new Blob(recordingChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+    const blob = new Blob(recordingChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
     if (blob.size < 500) {
       // Too small — restart
-      if (sttActive && callActive) setTimeout(startRecordingChunk, 300);
+      if (sttActive && window.callActive) setTimeout(startRecordingChunk, 300);
       return;
     }
     setCallStatus('transcribing');
     // Update placeholder to show transcribing
     if (window._whisperPlaceholder) {
-      var bubble = window._whisperPlaceholder.querySelector('.msg-bubble');
+      const bubble = window._whisperPlaceholder.querySelector('.msg-bubble');
       if (bubble) bubble.textContent = '⏳ Transcribing...';
     } else {
       window._whisperPlaceholder = addMessage('⏳ Transcribing...', 'user', { timestamp: Date.now(), placeholder: true });
     }
-    var reader = new FileReader();
+    const reader = new FileReader();
     reader.onload = function() {
-      var b64 = reader.result.split(',')[1];
+      const b64 = reader.result.split(',')[1];
       secureSend(JSON.stringify({ type: 'audio', data: b64 }));
       // Restart recording for next utterance
-      if (sttActive && callActive && !callPlaying) {
+      if (sttActive && window.callActive && !callPlaying) {
         setTimeout(startRecordingChunk, 300);
       }
     };
@@ -3572,13 +3513,13 @@ function startRecordingChunk() {
   setCallStatus('listening');
 
   // Use simple energy-based VAD
-  var dataArray = new Uint8Array(analyserNode.frequencyBinCount);
-  var speechStarted = false;
-  var silenceCount = 0;
-  var totalFrames = 0;
+  const dataArray = new Uint8Array(analyserNode.frequencyBinCount);
+  let speechStarted = false;
+  let silenceCount = 0;
+  let totalFrames = 0;
 
-  var vadInterval = setInterval(function() {
-    if (!sttActive || !callActive || !mediaRecorder || mediaRecorder.state !== 'recording') {
+  const vadInterval = setInterval(function() {
+    if (!sttActive || !window.callActive || !mediaRecorder || mediaRecorder.state !== 'recording') {
       clearInterval(vadInterval);
       return;
     }
@@ -3586,17 +3527,16 @@ function startRecordingChunk() {
     analyserNode.getByteTimeDomainData(dataArray);
 
     // Calculate RMS energy
-    var sum = 0;
-    for (var i = 0; i < dataArray.length; i++) {
-      var val = (dataArray[i] - 128) / 128;
+    let sum = 0;
+    for (let i = 0; i < dataArray.length; i++) {
+      const val = (dataArray[i] - 128) / 128;
       sum += val * val;
     }
-    var rms = Math.sqrt(sum / dataArray.length);
+    const rms = Math.sqrt(sum / dataArray.length);
 
     if (rms > 0.07) { // Balanced: responsive but filters noise
       // Barge-in: stop TTS if user starts speaking
       if (callPlaying && !speechStarted) {
-        console.log('[VAD] Barge-in detected, stopping TTS');
         if (activeTTSRunId) {
           secureSend(JSON.stringify({ type: 'barge_in', runId: activeTTSRunId }));
         }
@@ -3620,7 +3560,7 @@ function startRecordingChunk() {
     // Speech detected then 2s silence → send
     if (speechStarted && silenceCount > 20) {
       clearInterval(vadInterval);
-      try { mediaRecorder.stop(); } catch(e) {}
+      try { mediaRecorder.stop(); } catch(_e) { /* ignore */ }
       return;
     }
 
@@ -3628,10 +3568,10 @@ function startRecordingChunk() {
     if (totalFrames > 100) {
       clearInterval(vadInterval);
       if (speechStarted) {
-        try { mediaRecorder.stop(); } catch(e) {}
+        try { mediaRecorder.stop(); } catch(_e) { /* ignore */ }
       } else {
         // No speech detected in 10s — restart
-        try { mediaRecorder.stop(); } catch(e) {}
+        try { mediaRecorder.stop(); } catch(_e) { /* ignore */ }
       }
     }
   }, 100);
@@ -3640,7 +3580,7 @@ function startRecordingChunk() {
 function stopMediaRecorderSTT() {
   sttActive = false;
   if (mediaRecorder && mediaRecorder.state === 'recording') {
-    try { mediaRecorder.stop(); } catch(e) {}
+    try { mediaRecorder.stop(); } catch(_e) { /* ignore */ }
   }
   mediaRecorder = null;
   if (mediaStream) {
@@ -3656,7 +3596,7 @@ function startCall() {
   unlockAudioContext();
   
   // Pre-grant mic permission via getUserMedia (persists in PWA mode on iOS)
-  var micReady = micPermissionGranted
+  const micReady = micPermissionGranted
     ? Promise.resolve()
     : navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
         // Keep stream alive — stopping tracks revokes permission on some browsers
@@ -3673,7 +3613,6 @@ function startCall() {
     // Voice bar now in avatar panel, no padding needed
     messagesEl.scrollTop = messagesEl.scrollHeight; // Keep scroll at bottom
     // Notify server to enable TTS
-    console.log('[Voice] Sending voice_mode:true to server');
     if (ws && ws.readyState === 1) secureSend(JSON.stringify({ type: 'voice_mode', enabled: true }));
     setCallStatus('listening');
     // Use Whisper if enabled, otherwise browser STT
@@ -3718,8 +3657,8 @@ function endCall() {
 
 // ── Update call status text ──
 function setCallStatus(mode) {
-  var statusEl = document.getElementById('callStatus');
-  var waveform = document.getElementById('callWaveform');
+  const statusEl = document.getElementById('callStatus');
+  const waveform = document.getElementById('callWaveform');
   if (mode === 'listening') {
     statusEl.textContent = 'Listening...';
     statusEl.className = 'call-status listening';
@@ -3736,12 +3675,12 @@ function setCallStatus(mode) {
 }
 
 // ── Noise-filtering helpers ──
-var CALL_CONFIDENCE_THRESHOLD = 0.5; // Lowered to accept more barge-in speech
-var CALL_MIN_LENGTH = 2;
+const CALL_CONFIDENCE_THRESHOLD = 0.5; // Lowered to accept more barge-in speech
+const CALL_MIN_LENGTH = 2;
 // Common noise / filler transcriptions to discard
-var CALL_NOISE_WORDS = /^(um+|uh+|hm+|hmm+|ah+|oh+|er+|huh+|mhm+|mm+|shh+|tsk|psst|ha(ha)*|he(he)*|ho(ho)*)$/i;
+const CALL_NOISE_WORDS = /^(um+|uh+|hm+|hmm+|ah+|oh+|er+|huh+|mhm+|mm+|shh+|tsk|psst|ha(ha)*|he(he)*|ho(ho)*)$/i;
 // Single repeated letter like "aaa", "sss"
-var CALL_REPEATED_LETTER = /^(.)\1*$/;
+const CALL_REPEATED_LETTER = /^(.)\1*$/;
 
 /**
  * Returns true if the transcript should be discarded as noise.
@@ -3749,7 +3688,7 @@ var CALL_REPEATED_LETTER = /^(.)\1*$/;
  */
 function isNoisyTranscript(text, confidence) {
   if (!text) return true;
-  var t = text.trim();
+  const t = text.trim();
   if (t.length < CALL_MIN_LENGTH) return true;
   if (typeof confidence === 'number' && confidence < CALL_CONFIDENCE_THRESHOLD) return true;
   if (CALL_NOISE_WORDS.test(t)) return true;
@@ -3758,11 +3697,11 @@ function isNoisyTranscript(text, confidence) {
 }
 
 // ── Speech Recognition ──
-var micPermissionGranted = false;
-var _sttRestartTimer = null;
-var _sttStarting = false;
-var _sttBargeInActive = false;
-var _sttErrorHandled = false;
+let micPermissionGranted = false;
+let _sttRestartTimer = null;
+let _sttStarting = false;
+let _sttBargeInActive = false;
+let _sttErrorHandled = false;
 
 function scheduleRecognitionRestart(delayMs) {
   if (_sttRestartTimer) clearTimeout(_sttRestartTimer);
@@ -3783,14 +3722,14 @@ function ensureRecognitionInstance() {
   callRecognition.onstart = function() { _sttStarting = false; };
 
   // Buffer to capture speech during TTS for barge-in
-  var _bargeInBuffer = '';
+  let _bargeInBuffer = '';
   
   callRecognition.onresult = function(event) {
-    if (!callActive) return;
+    if (!window.callActive) return;
     
     // If TTS is playing, buffer high-confidence speech for after barge-in
     if (callPlaying) {
-      for (var k = event.resultIndex; k < event.results.length; k++) {
+      for (let k = event.resultIndex; k < event.results.length; k++) {
         if (event.results[k][0].confidence > 0.75) {
           _bargeInBuffer = event.results[k][0].transcript;
         }
@@ -3799,25 +3738,23 @@ function ensureRecognitionInstance() {
     }
     
     // After barge-in, prepend buffered speech if any
-    var bargeInPrefix = '';
+    let bargeInPrefix = '';
     if (_bargeInBuffer) {
-      console.log('[Barge-in] Using buffered speech:', _bargeInBuffer);
       bargeInPrefix = _bargeInBuffer;
       _bargeInBuffer = '';
     }
-    var interim = '';
-    for (var i = event.resultIndex; i < event.results.length; i++) {
-      var transcript = event.results[i][0].transcript;
-      var confidence = event.results[i][0].confidence;
+    let interim = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcript = event.results[i][0].transcript;
+      const confidence = event.results[i][0].confidence;
 
       if (event.results[i].isFinal) {
         if (isNoisyTranscript(transcript, confidence)) {
-          console.log('[STT] Filtered as noisy:', transcript, 'conf:', confidence);
           hideSpeechPreview();
           continue;
         }
         // Include any buffered barge-in speech
-        var text = (bargeInPrefix ? bargeInPrefix + ' ' : '') + transcript.trim();
+        let text = (bargeInPrefix ? bargeInPrefix + ' ' : '') + transcript.trim();
         text = text.trim();
         bargeInPrefix = ''; // Clear after use
         addMessage(text, 'user', { timestamp: Date.now() });
@@ -3832,7 +3769,6 @@ function ensureRecognitionInstance() {
       }
     }
     if (interim) {
-      console.log('[STT] Interim:', interim);
       showSpeechPreview(interim);
     } else {
       hideSpeechPreview();
@@ -3843,7 +3779,7 @@ function ensureRecognitionInstance() {
     _sttStarting = false;
     if (event.error === 'no-speech' || event.error === 'aborted' || event.error === 'network') {
       _sttErrorHandled = true;
-      if (callActive && !callPlaying) {
+      if (window.callActive && !callPlaying) {
         scheduleRecognitionRestart(800);
       }
     } else if (event.error === 'not-allowed') {
@@ -3859,57 +3795,51 @@ function ensureRecognitionInstance() {
     }
     if (_sttBargeInActive) {
       _sttBargeInActive = false;
-      if (callActive && !callPlaying) {
+      if (window.callActive && !callPlaying) {
         scheduleRecognitionRestart(300);
       }
       return;
     }
-    if (callActive && !callPlaying) {
+    if (window.callActive && !callPlaying) {
       scheduleRecognitionRestart(800);
     }
   };
 }
 
 // ── VAD for barge-in during browser STT ──
-var bargeInVADInterval = null;
-var bargeInStream = null;
-var bargeInAnalyser = null;
+let bargeInVADInterval = null;
+let bargeInStream = null;
+let bargeInAnalyser = null;
 
 function startBargeInVAD() {
   if (bargeInVADInterval) return; // Already running
-  console.log('[VAD] Starting barge-in VAD monitor');
   
   navigator.mediaDevices.getUserMedia({ 
     audio: { echoCancellation: true, noiseSuppression: true }
   }).then(function(stream) {
     bargeInStream = stream;
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    var source = audioCtx.createMediaStreamSource(stream);
+    const source = audioCtx.createMediaStreamSource(stream);
     bargeInAnalyser = audioCtx.createAnalyser();
     bargeInAnalyser.fftSize = 512;
     source.connect(bargeInAnalyser);
     
-    var dataArray = new Uint8Array(bargeInAnalyser.fftSize);
+    const dataArray = new Uint8Array(bargeInAnalyser.fftSize);
     
     bargeInVADInterval = setInterval(function() {
-      if (!callActive) { stopBargeInVAD(); return; }
+      if (!window.callActive) { stopBargeInVAD(); return; }
       if (!callPlaying) return; // Only check during TTS playback
       
       bargeInAnalyser.getByteTimeDomainData(dataArray);
-      var sum = 0;
-      for (var i = 0; i < dataArray.length; i++) {
-        var val = (dataArray[i] - 128) / 128;
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        const val = (dataArray[i] - 128) / 128;
         sum += val * val;
       }
-      var rms = Math.sqrt(sum / dataArray.length);
+      const rms = Math.sqrt(sum / dataArray.length);
       
-      // Log all RMS values during TTS for debugging
-      if (rms > 0.05) {
-        console.log('[VAD] RMS:', rms.toFixed(3), 'playing:', callPlaying);
-      }
       // Lower threshold for barge-in
       if (rms > 0.08) {
-        console.log('[VAD Barge-in] Triggered! RMS:', rms.toFixed(3));
         if (activeTTSRunId) {
           secureSend(JSON.stringify({ type: 'barge_in', runId: activeTTSRunId }));
         }
@@ -3921,7 +3851,7 @@ function startBargeInVAD() {
         if (!callUseWhisper && SpeechRecognitionAPI) {
           try {
             if (callRecognition) callRecognition.abort();
-          } catch(e) {}
+          } catch(_e) { /* ignore */ }
           setTimeout(function() { startRecognition(); }, 100);
         }
       }
@@ -3943,7 +3873,7 @@ function stopBargeInVAD() {
 }
 
 function startRecognition() {
-  if (!SpeechRecognitionAPI || !callActive) return;
+  if (!SpeechRecognitionAPI || !window.callActive) return;
   if (callUseWhisper) return; // Don't start browser STT when Whisper mode is on
   // Keep running during TTS for barge-in support (removed callPlaying check)
   if (_sttStarting) return;
@@ -3958,7 +3888,7 @@ function startRecognition() {
   } catch (e) {
     // If already running (InvalidStateError), abort and retry
     if (e.name === 'InvalidStateError') {
-      try { callRecognition.abort(); } catch (e2) {}
+      try { callRecognition.abort(); } catch (_e2) { /* ignore */ }
       _sttStarting = false;
       scheduleRecognitionRestart(500);
     } else {
@@ -3974,13 +3904,13 @@ function stopRecognition() {
   _sttBargeInActive = false;
   _sttErrorHandled = false;
   if (callRecognition) {
-    try { callRecognition.abort(); } catch (e) {}
+    try { callRecognition.abort(); } catch (_e) { /* ignore */ }
     callRecognition = null; // destroy on full stop (endCall)
   }
 }
 
 // ── Browser TTS (speechSynthesis) ──
-var synth = window.speechSynthesis;
+const synth = window.speechSynthesis;
 
 // DEAD CODE: speakCallResponse was the browser speechSynthesis path.
 // Server-side TTS (edge-tts) now handles all voice output via the
@@ -3993,12 +3923,12 @@ window.speakCallResponse = function(text) {
 function playNextTTSChunk() {
   // Ensure AudioContext is ready — create if needed
   if (!audioCtx) {
-    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(_e) { /* ignore */ }
   }
   if (audioCtx && audioCtx.state === 'suspended') {
     audioCtx.resume().catch(function() {});
   }
-  var queue = window._ttsQueue || [];
+  const queue = window._ttsQueue || [];
   if (queue.length === 0) {
     callPlaying = false;
     if (window.callActive) {
@@ -4020,15 +3950,12 @@ function playNextTTSChunk() {
       // Ensure recognition is active during TTS for barge-in
       if (callRecognition.state !== 'running') {
         callRecognition.start();
-        console.log('[Barge-in] Restarted recognition during TTS');
       }
-    } catch(e) {
-      console.log('[Barge-in] Recognition already running:', e.message);
-    }
+    } catch(_e) { /* ignore - recognition may not be available */ }
   }
   if (window.setAvatarState) setAvatarState('talking');
   setCallStatus('speaking');
-  var url = queue.shift();
+  const url = queue.shift();
   playTTSAudio(url, function() {
     // Play next chunk or finish
     playNextTTSChunk();
@@ -4038,7 +3965,7 @@ function playNextTTSChunk() {
 function stopCallAudio() {
   if (synth) synth.cancel();
   if (activeTTSSource) {
-    try { activeTTSSource.onended = null; activeTTSSource.stop(); } catch(e) {}
+    try { activeTTSSource.onended = null; activeTTSSource.stop(); } catch(_e) { /* ignore */ }
     activeTTSSource = null;
   }
   if (window._ttsAudioEl) {
@@ -4051,18 +3978,32 @@ function stopCallAudio() {
 }
 
 // ── Event listeners ──
-// Tap avatar panel to start call (but not when clicking buttons)
+// Tap avatar panel to start call (but not when clicking buttons or dragging camera)
 if (avatarPanelEl) {
+  const avatarDragState = { startX: 0, startY: 0, endX: 0, endY: 0 };
+  // Use capture phase to always get pointer position, even if canvas stops propagation
+  window.addEventListener('pointerdown', function(e) {
+    avatarDragState.startX = e.clientX;
+    avatarDragState.startY = e.clientY;
+  }, true);
+  window.addEventListener('pointerup', function(e) {
+    avatarDragState.endX = e.clientX;
+    avatarDragState.endY = e.clientY;
+  }, true);
   avatarPanelEl.addEventListener('click', function(e) {
+    // Check if it was a drag (moved > 10px)
+    const dx = Math.abs(avatarDragState.endX - avatarDragState.startX);
+    const dy = Math.abs(avatarDragState.endY - avatarDragState.startY);
+    if (dx > 10 || dy > 10) return; // Was a drag, not a click
     if (e.target.closest('.avatar-buttons') || e.target.closest('.avatar-action-btn') ||
         e.target.closest('#callEndBtn') || e.target.closest('#callOverlay') ||
         e.target.closest('.avatar-menu')) return;
-    if (callActive) { endCall(); } else { startCall(); }
+    if (window.callActive) { endCall(); } else { startCall(); }
   });
 }
 
 // Voice toggle in input area (if present) — toggles server TTS replies
-var voiceToggle = document.getElementById('voiceToggle');
+const voiceToggle = document.getElementById('voiceToggle');
 if (voiceToggle) {
   voiceToggle.addEventListener('click', function(e) {
     e.stopPropagation();
@@ -4074,7 +4015,7 @@ if (voiceToggle) {
   });
 }
 
-var callEndBtnEl = document.getElementById('callEndBtn');
+const callEndBtnEl = document.getElementById('callEndBtn');
 callEndBtnEl.addEventListener('click', function(e) {
   e.stopPropagation();
   e.preventDefault();
@@ -4094,27 +4035,27 @@ callEndBtnEl.addEventListener('touchend', function(e) {
 // ─── TASK PANEL ───
 // ═══════════════════════════════════════════════════════════
 (function() {
-  var taskBtn = document.getElementById('taskBtn');
-  var taskBtnHeader = document.getElementById('taskBtnHeader');
-  var taskPanel = document.getElementById('taskPanel');
-  var taskList = document.getElementById('taskList');
-  var taskCancel = document.getElementById('taskCancel');
-  var taskClose = document.getElementById('taskPanelClose');
-  var taskBadgeHeader = document.getElementById('taskBadgeHeader');
-  var rawLines = [];
+  const taskBtn = document.getElementById('taskBtn');
+  const taskBtnHeader = document.getElementById('taskBtnHeader');
+  const taskPanel = document.getElementById('taskPanel');
+  const taskList = document.getElementById('taskList');
+  const taskCancel = document.getElementById('taskCancel');
+  const taskClose = document.getElementById('taskPanelClose');
+  const taskBadgeHeader = document.getElementById('taskBadgeHeader');
+  let rawLines = [];
 
   function parseTasks(content) {
     rawLines = content.split('\n');
-    var sections = [];
-    var currentSection = { title: '', items: [] };
-    for (var i = 0; i < rawLines.length; i++) {
-      var line = rawLines[i].trim();
+    const sections = [];
+    let currentSection = { title: '', items: [] };
+    for (let i = 0; i < rawLines.length; i++) {
+      const line = rawLines[i].trim();
       if (line.startsWith('## ') && line !== '## Priority Guide') {
         if (currentSection.title || currentSection.items.length) sections.push(currentSection);
         currentSection = { title: line.replace('## ', ''), items: [] };
       } else if (line.startsWith('- ')) {
-        var text = line.slice(2);
-        var done = text.startsWith('[x] ') || text.startsWith('✅');
+        const text = line.slice(2);
+        const done = text.startsWith('[x] ') || text.startsWith('✅');
         currentSection.items.push({ text: text, lineIndex: i, done: done });
       }
     }
@@ -4126,24 +4067,24 @@ callEndBtnEl.addEventListener('touchend', function(e) {
     taskList.innerHTML = '';
     sections.forEach(function(section) {
       if (section.title) {
-        var h = document.createElement('div');
+        const h = document.createElement('div');
         h.className = 'task-section-title';
         h.textContent = section.title;
         taskList.appendChild(h);
       }
       if (section.items.length === 0 && section.title) {
-        var empty = document.createElement('div');
+        const empty = document.createElement('div');
         empty.style.cssText = 'color:var(--text-dim);font-size:13px;padding:6px 12px;';
         empty.textContent = 'No tasks';
         taskList.appendChild(empty);
       }
       section.items.forEach(function(item) {
-        var row = document.createElement('div');
+        const row = document.createElement('div');
         row.className = 'task-item';
-        var txt = document.createElement('span');
+        const txt = document.createElement('span');
         txt.className = 'task-text' + (item.done ? ' done' : '');
         txt.textContent = item.text.replace(/^\[x\] /, '').replace(/^\[ \] /, '');
-        var rm = document.createElement('button');
+        const rm = document.createElement('button');
         rm.className = 'task-remove-btn';
         rm.textContent = '✕';
         rm.title = 'Remove task';
@@ -4154,13 +4095,13 @@ callEndBtnEl.addEventListener('touchend', function(e) {
       });
     });
     // Add new task input
-    var addRow = document.createElement('div');
+    const addRow = document.createElement('div');
     addRow.className = 'task-add-row';
-    var input = document.createElement('input');
+    const input = document.createElement('input');
     input.type = 'text';
     input.placeholder = 'Add a task...';
     input.id = 'taskAddInput';
-    var addBtn = document.createElement('button');
+    const addBtn = document.createElement('button');
     addBtn.className = 'task-add-btn';
     addBtn.textContent = '+ Add';
     addBtn.addEventListener('click', function() { addTask(input.value); });
@@ -4180,13 +4121,13 @@ callEndBtnEl.addEventListener('touchend', function(e) {
   function addTask(text) {
     if (!text.trim()) return;
     // Find the "Active" section and add after it
-    var insertAt = -1;
-    for (var i = 0; i < rawLines.length; i++) {
+    let insertAt = -1;
+    for (let i = 0; i < rawLines.length; i++) {
       if (rawLines[i].trim() === '## Active') { insertAt = i + 1; break; }
     }
     if (insertAt === -1) {
       // Find first ## section with items
-      for (var j = 0; j < rawLines.length; j++) {
+      for (let j = 0; j < rawLines.length; j++) {
         if (rawLines[j].trim().startsWith('## ') && rawLines[j].trim() !== '## Priority Guide') {
           insertAt = j + 1; break;
         }
@@ -4198,7 +4139,7 @@ callEndBtnEl.addEventListener('touchend', function(e) {
   }
 
   function saveAndRefresh() {
-    var content = rawLines.join('\n');
+    const content = rawLines.join('\n');
     fetch('/api/tasks', {
       method: 'POST',
       headers: {
@@ -4207,7 +4148,7 @@ callEndBtnEl.addEventListener('touchend', function(e) {
       },
       body: JSON.stringify({ content: content })
     }).then(function() {
-      var sections = parseTasks(content);
+      const sections = parseTasks(content);
       renderTasks(sections);
       updateBadge(content);
     });
@@ -4221,7 +4162,7 @@ callEndBtnEl.addEventListener('touchend', function(e) {
     })
     .then(function(r) { return r.json(); })
     .then(function(data) {
-      var sections = parseTasks(data.content || '');
+      const sections = parseTasks(data.content || '');
       renderTasks(sections);
       updateBadge(data.content);
     })
@@ -4233,13 +4174,13 @@ callEndBtnEl.addEventListener('touchend', function(e) {
   function closeTasks() { taskPanel.classList.remove('active'); }
 
   function updateBadge(content) {
-    var badge = document.getElementById('taskBadge');
-    var badgeHeader = document.getElementById('taskBadgeHeader');
-    var lines = (content || '').split('\n');
-    var count = 0;
-    var inDone = false;
-    for (var i = 0; i < lines.length; i++) {
-      var l = lines[i].trim();
+    const badge = document.getElementById('taskBadge');
+    const badgeHeader = document.getElementById('taskBadgeHeader');
+    const lines = (content || '').split('\n');
+    let count = 0;
+    let inDone = false;
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i].trim();
       if (l.startsWith('## Done')) { inDone = true; continue; }
       if (l.startsWith('## ')) inDone = false;
       if (!inDone && l.startsWith('- ') && !l.startsWith('- [x]') && !l.startsWith('- ✅')) count++;
@@ -4278,8 +4219,8 @@ callEndBtnEl.addEventListener('touchend', function(e) {
 
 // ─── Menu & Passphrase ───
 (function() {
-  var menuBtn = document.getElementById('menuBtn');
-  var avatarMenu = document.getElementById('avatarMenu');
+  const menuBtn = document.getElementById('menuBtn');
+  const avatarMenu = document.getElementById('avatarMenu');
   if (menuBtn && avatarMenu) {
     menuBtn.addEventListener('click', function(e) {
       e.stopPropagation();
@@ -4294,11 +4235,11 @@ callEndBtnEl.addEventListener('touchend', function(e) {
   }
 
   // ── Passkeys management ──
-  var passkeysBtn = document.getElementById('passkeysBtn');
-  var passkeysModal = document.getElementById('passkeysModal');
-  var passkeysList = document.getElementById('passkeysList');
-  var addPasskeyBtn = document.getElementById('addPasskeyBtn');
-  var passkeysClose = document.getElementById('passkeysClose');
+  const passkeysBtn = document.getElementById('passkeysBtn');
+  const passkeysModal = document.getElementById('passkeysModal');
+  const passkeysList = document.getElementById('passkeysList');
+  const addPasskeyBtn = document.getElementById('addPasskeyBtn');
+  const passkeysClose = document.getElementById('passkeysClose');
 
   function loadPasskeys() {
     fetch('/auth/passkeys', {
@@ -4308,11 +4249,11 @@ callEndBtnEl.addEventListener('touchend', function(e) {
       if (!data.passkeys) return;
       passkeysList.innerHTML = '';
       data.passkeys.forEach(function(pk) {
-        var div = document.createElement('div');
+        const div = document.createElement('div');
         div.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:10px 12px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; margin-bottom:8px;';
-        var info = document.createElement('div');
-        var transports = (pk.transports || []).join(', ') || 'unknown';
-        var date = pk.createdAt ? new Date(pk.createdAt).toLocaleDateString() : 'unknown';
+        const info = document.createElement('div');
+        const transports = (pk.transports || []).join(', ') || 'unknown';
+        const date = pk.createdAt ? new Date(pk.createdAt).toLocaleDateString() : 'unknown';
         info.innerHTML = '<div style="font-size:14px; font-weight:600;">' +
           (pk.deviceType === 'multiDevice' ? '☁️' : '💻') + ' ' +
           (pk.deviceType === 'multiDevice' ? 'Synced' : 'Device-bound') +
@@ -4320,7 +4261,7 @@ callEndBtnEl.addEventListener('touchend', function(e) {
           '<div style="font-size:12px; color:var(--text-dim);">' + transports + ' · ' + date + '</div>';
         div.appendChild(info);
         if (data.passkeys.length > 1) {
-          var del = document.createElement('button');
+          const del = document.createElement('button');
           del.textContent = '🗑';
           del.style.cssText = 'background:none; border:none; font-size:18px; cursor:pointer; padding:4px 8px;';
           del.onclick = function() {
@@ -4348,7 +4289,7 @@ callEndBtnEl.addEventListener('touchend', function(e) {
   }
 
   // Voice tip button — starts voice call when clicked
-  var voiceTipBtn = document.getElementById('voiceTipBtn');
+  const voiceTipBtn = document.getElementById('voiceTipBtn');
   if (voiceTipBtn) {
     voiceTipBtn.addEventListener('click', function(e) {
       e.stopPropagation();
@@ -4360,11 +4301,11 @@ callEndBtnEl.addEventListener('touchend', function(e) {
   }
 
   // Copy URL button
-  var copyUrlBtn = document.getElementById('copyUrlBtn');
+  const copyUrlBtn = document.getElementById('copyUrlBtn');
   if (copyUrlBtn) {
     copyUrlBtn.addEventListener('click', function(e) {
       e.stopPropagation();
-      var cleanUrl = window.location.origin + window.location.pathname;
+      const cleanUrl = window.location.origin + window.location.pathname;
       navigator.clipboard.writeText(cleanUrl).then(function() {
         copyUrlBtn.innerHTML = copyUrlBtn.innerHTML.replace('Copy App URL', 'Copied!');
         setTimeout(function() {
@@ -4372,7 +4313,7 @@ callEndBtnEl.addEventListener('touchend', function(e) {
         }, 1500);
       }).catch(function() {
         // Fallback for older browsers
-        var input = document.createElement('input');
+        const input = document.createElement('input');
         input.value = cleanUrl;
         document.body.appendChild(input);
         input.select();
@@ -4387,7 +4328,7 @@ callEndBtnEl.addEventListener('touchend', function(e) {
   }
 
   // Logout button
-  var logoutBtn = document.getElementById('logoutBtn');
+  const logoutBtn = document.getElementById('logoutBtn');
   if (logoutBtn) {
     logoutBtn.addEventListener('click', function(e) {
       e.stopPropagation();
@@ -4405,16 +4346,16 @@ callEndBtnEl.addEventListener('touchend', function(e) {
       addPasskeyBtn.disabled = true;
       addPasskeyBtn.textContent = 'Registering...';
       try {
-        var optRes = await fetch('/auth/register-options', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-        var optData = await optRes.json();
+        const optRes = await fetch('/auth/register-options', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const optData = await optRes.json();
         if (!optData.options) throw new Error('No options from server: ' + JSON.stringify(optData));
-        var cred = await SimpleWebAuthnBrowser.startRegistration({ optionsJSON: optData.options });
-        var verRes = await fetch('/auth/register-verify', {
+        const cred = await SimpleWebAuthnBrowser.startRegistration({ optionsJSON: optData.options });
+        const verRes = await fetch('/auth/register-verify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ challengeId: optData.challengeId, response: cred })
         });
-        var verData = await verRes.json();
+        const verData = await verRes.json();
         if (verData.verified) {
           addPasskeyBtn.textContent = '✓ Added!';
           setTimeout(function() { addPasskeyBtn.textContent = '+ Add Passkey'; addPasskeyBtn.disabled = false; }, 2000);
@@ -4443,14 +4384,14 @@ callEndBtnEl.addEventListener('touchend', function(e) {
   }
 
   // ─── Avatar Manager ───
-  var avatarManagerBtn = document.getElementById('avatarManagerBtn');
-  var avatarManagerModal = document.getElementById('avatarManagerModal');
-  var avatarList = document.getElementById('avatarList');
-  var selectAvatarBtn = document.getElementById('selectAvatarBtn');
-  var deleteAvatarBtn = document.getElementById('deleteAvatarBtn');
-  var avatarManagerClose = document.getElementById('avatarManagerClose');
+  const avatarManagerBtn = document.getElementById('avatarManagerBtn');
+  const avatarManagerModal = document.getElementById('avatarManagerModal');
+  const avatarList = document.getElementById('avatarList');
+  const selectAvatarBtn = document.getElementById('selectAvatarBtn');
+  const deleteAvatarBtn = document.getElementById('deleteAvatarBtn');
+  const avatarManagerClose = document.getElementById('avatarManagerClose');
 
-  var availableAvatars = [];  // Populated from server via /api/avatar/list
+  let availableAvatars = [];  // Populated from server via /api/avatar/list
   
   // Fetch avatar list from server (includes cloud only if file exists)
   function refreshAvatarList() {
@@ -4460,24 +4401,23 @@ callEndBtnEl.addEventListener('touchend', function(e) {
   }
   refreshAvatarList();
   // Prefer server's avatar selection (from pre-fetch), fall back to localStorage
-  var currentAvatar = (window.CLAWTIME_THEME && window.CLAWTIME_THEME.id) || localStorage.getItem('selectedAvatar');
-  var previewingAvatar = null;
-  var previewAnimationId = null;
+  let currentAvatar = (window.CLAWTIME_THEME && window.CLAWTIME_THEME.id) || localStorage.getItem('selectedAvatar');
+  let previewingAvatar = null;
+  let previewAnimationId = null;
 
   function getAvatarData(id) {
-    var found = availableAvatars.find(function(a) { return a.id === id; }) || availableAvatars[0];
+    const found = availableAvatars.find(function(a) { return a.id === id; }) || availableAvatars[0];
     return found || { id: id || 'unknown', emoji: '🎭', color: 'f97316', name: 'Loading...' };
   }
 
   // Apply avatar theme (emoji + color)
   function applyAvatarTheme(avatarId) {
-    var av = getAvatarData(avatarId);
-    console.log('[Theme] Applying:', avatarId, av.emoji, av.color);
+    const av = getAvatarData(avatarId);
     
     // Update favicon emoji (remove+create to defeat caching)
-    var oldLink = document.querySelector('link[rel="icon"]');
+    const oldLink = document.querySelector('link[rel="icon"]');
     if (oldLink) oldLink.remove();
-    var newLink = document.createElement('link');
+    const newLink = document.createElement('link');
     newLink.rel = 'icon';
     newLink.href = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>" + encodeURIComponent(av.emoji) + "</text></svg>";
     document.head.appendChild(newLink);
@@ -4486,11 +4426,11 @@ callEndBtnEl.addEventListener('touchend', function(e) {
     document.documentElement.style.setProperty('--accent', '#' + av.color);
     
     // Update auth screen emoji if visible
-    var authEmoji = document.getElementById('authEmoji');
+    const authEmoji = document.getElementById('authEmoji');
     if (authEmoji) authEmoji.textContent = av.emoji;
     
     // Update welcome emoji in chat panel
-    var welcomeEmoji = document.getElementById('welcomeEmoji');
+    const welcomeEmoji = document.getElementById('welcomeEmoji');
     if (welcomeEmoji) welcomeEmoji.textContent = av.emoji;
     
     // Update bot emoji config
@@ -4507,10 +4447,9 @@ callEndBtnEl.addEventListener('touchend', function(e) {
   // Dynamically load avatar without page refresh
   function loadAvatar(avatarId) {
     return new Promise(function(resolve, reject) {
-      console.log('[Avatar] Loading:', avatarId);
       
       // Clear existing avatar scene completely
-      var canvas = document.getElementById('avatarCanvas');
+      const canvas = document.getElementById('avatarCanvas');
       if (canvas) {
         // Remove all children including the WebGL canvas
         while (canvas.firstChild) {
@@ -4535,27 +4474,14 @@ callEndBtnEl.addEventListener('touchend', function(e) {
       });
       
       // Load new avatar script with cache-busting
-      var script = document.createElement('script');
+      const script = document.createElement('script');
       script.src = '/avatar.js?avatar=' + avatarId + '&t=' + Date.now();
       script.onload = function() {
-        console.log('[Avatar] Script loaded, initializing...');
         // Give browser time to parse and execute
         setTimeout(function() {
           if (window.initAvatarScene) {
             window.initAvatarScene();
-            console.log('[Avatar] Initialized:', avatarId);
-            // Wrap setAvatarState to sync with server
-            if (window.setAvatarState) {
-              var originalSetState = window.setAvatarState;
-              window.setAvatarState = function(state) {
-                originalSetState(state);
-                // Notify server of state change (for reconnect accuracy)
-                if (window.secureSend) {
-                  try { secureSend(JSON.stringify({ type: 'avatar_state', state: state })); } catch(e) {}
-                }
-              };
-              window.setAvatarState._original = originalSetState;
-            }
+            // Server is source of truth for avatar state - no wrapping needed
             // Trigger resize to ensure proper scaling
             window.dispatchEvent(new Event('resize'));
           } else {
@@ -4574,8 +4500,8 @@ callEndBtnEl.addEventListener('touchend', function(e) {
 
   function startPreviewAnimation() {
     stopPreviewAnimation();
-    var states = ['idle', 'thinking', 'talking', 'happy', 'working', 'sleeping', 'error'];
-    var i = 0;
+    const states = ['idle', 'thinking', 'talking', 'happy', 'working', 'sleeping', 'error'];
+    let i = 0;
     function cycle() {
       if (!avatarManagerModal.classList.contains('open')) {
         if (window.setAvatarState) window.setAvatarState('idle');
@@ -4597,12 +4523,13 @@ callEndBtnEl.addEventListener('touchend', function(e) {
   }
 
   function updateButtonVisibility() {
-    var av = getAvatarData(previewingAvatar);
+    const av = getAvatarData(previewingAvatar);
     if (selectAvatarBtn) {
       selectAvatarBtn.style.display = (previewingAvatar !== currentAvatar) ? 'inline-block' : 'none';
     }
     if (deleteAvatarBtn) {
-      deleteAvatarBtn.style.display = (av.custom && previewingAvatar !== currentAvatar) ? 'inline-block' : 'none';
+      // Show delete for any avatar that's not currently in use
+      deleteAvatarBtn.style.display = (previewingAvatar !== currentAvatar) ? 'inline-block' : 'none';
     }
   }
 
@@ -4610,12 +4537,12 @@ callEndBtnEl.addEventListener('touchend', function(e) {
     if (!avatarList) return;
     avatarList.innerHTML = '';
     availableAvatars.forEach(function(av) {
-      var isSelected = currentAvatar === av.id;
-      var isPreviewing = previewingAvatar === av.id;
-      var card = document.createElement('div');
+      const isSelected = currentAvatar === av.id;
+      const isPreviewing = previewingAvatar === av.id;
+      const card = document.createElement('div');
       card.className = 'avatar-card' + (isSelected ? ' selected' : '') + (isPreviewing ? ' previewing' : '');
       
-      var html = '<div class="avatar-card-emoji">' + av.emoji + '</div>' +
+      let html = '<div class="avatar-card-emoji">' + av.emoji + '</div>' +
                  '<div class="avatar-card-name">' + av.name + '</div>' +
                  '<div class="avatar-card-desc">' + av.description + '</div>';
       if (isSelected) html += '<div class="avatar-card-badge">Current</div>';
@@ -4660,6 +4587,15 @@ callEndBtnEl.addEventListener('touchend', function(e) {
       // Save selection
       currentAvatar = previewingAvatar;
       localStorage.setItem('selectedAvatar', currentAvatar);
+      // Update CLAWTIME_THEME so modal re-open shows correct selection
+      if (window.CLAWTIME_THEME) {
+        window.CLAWTIME_THEME.id = currentAvatar;
+        const av = getAvatarData(currentAvatar);
+        if (av) {
+          window.CLAWTIME_THEME.emoji = av.emoji;
+          window.CLAWTIME_THEME.color = av.color;
+        }
+      }
       // Apply theme immediately
       applyAvatarTheme(currentAvatar);
       // Notify server to save preference
@@ -4677,8 +4613,8 @@ callEndBtnEl.addEventListener('touchend', function(e) {
 
   if (deleteAvatarBtn) {
     deleteAvatarBtn.addEventListener('click', function() {
-      var av = getAvatarData(previewingAvatar);
-      if (!av.custom) return;
+      const av = getAvatarData(previewingAvatar);
+      if (!av) return;
       if (!confirm('Delete "' + av.name + '" avatar?')) return;
       fetch('/api/avatar/delete', {
         method: 'POST',
@@ -4686,8 +4622,8 @@ callEndBtnEl.addEventListener('touchend', function(e) {
         body: JSON.stringify({ avatar: previewingAvatar })
       }).then(function(r) { return r.json(); }).then(function(data) {
         if (data.success) {
-          var deletedAvatar = previewingAvatar;
-          var wasCurrentAvatar = (deletedAvatar === currentAvatar);
+          const deletedAvatar = previewingAvatar;
+          const wasCurrentAvatar = (deletedAvatar === currentAvatar);
           
           // Remove from available avatars list
           availableAvatars = availableAvatars.filter(function(a) { return a.id !== deletedAvatar; });
@@ -4737,6 +4673,10 @@ callEndBtnEl.addEventListener('touchend', function(e) {
   applyAvatarTheme(currentAvatar);
   // Sync localStorage with server preference
   localStorage.setItem('selectedAvatar', currentAvatar);
+  // Load avatar on page init (needed for avatar state sync)
+  if (currentAvatar) {
+    loadAvatar(currentAvatar);
+  }
 })();
 
 // ─── Start ───

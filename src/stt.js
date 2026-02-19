@@ -22,7 +22,7 @@ export async function transcribeAudio(audioBuffer) {
     const { stdout } = await execFileAsync('whisper-transcribe', [tmpFile], { timeout: 30000 });
     return stdout.trim();
   } finally {
-    try { fs.unlinkSync(tmpFile); } catch {}
+    try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
   }
 }
 
@@ -39,6 +39,6 @@ setInterval(() => {
           fs.unlinkSync(fp);
         }
       }
-    } catch {}
+    } catch { /* ignore */ }
   }
 }, 5 * 60 * 1000);

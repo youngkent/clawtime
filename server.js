@@ -31,16 +31,34 @@ import { loadCredentials } from './src/credentials.js';
 import { handleRequest } from './src/routes.js';
 import { setupWebSocket } from './src/websocket.js';
 import { setupInjectRoutes } from './src/inject.js';
+import { cleanupIncompleteMessages } from './src/store.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // § 13. SERVER STARTUP
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const server = http.createServer(handleRequest);
-setupWebSocket(server);
+let server = null;
 
-if (ENABLE_INJECT) {
-  setupInjectRoutes(server);
+export function startServer(options = {}) {
+  const port = options.port || PORT;
+  
+  // Clean up any incomplete messages from previous crashes/restarts
+  cleanupIncompleteMessages();
+
+  server = http.createServer(handleRequest);
+  setupWebSocket(server, options);
+
+  if (ENABLE_INJECT) {
+    setupInjectRoutes(server);
+  }
+  
+  return new Promise((resolve) => {
+    server.listen(port, '0.0.0.0', () => {
+      const creds = loadCredentials();
+      console.log(`ClawTime running on :${port} | ${BOT_NAME} ${BOT_EMOJI} | ${creds.length} passkey(s) | gw=${options.gwUrl || GW_URL}`);
+      resolve(server);
+    });
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -132,7 +150,8 @@ async function gracefulShutdown(signal) {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-server.listen(PORT, '0.0.0.0', () => {
-  const creds = loadCredentials();
-  console.log(`ClawTime running on :${PORT} | ${BOT_NAME} ${BOT_EMOJI} | ${creds.length} passkey(s) | gw=${GW_URL}`);
-});
+// Auto-start when run directly (not imported)
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
+  startServer();
+}

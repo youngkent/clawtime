@@ -114,29 +114,27 @@ describe('WebSocket Message Flow', () => {
       expect(currentText).toBe('Hello World');
     });
 
-    test('should reject significantly shorter text', () => {
-      let currentText = 'This is a very long message with lots of content';
-      const newText = 'Short';
-      const maxTextLen = currentText.length;
+    test('should keep longer text when shorter prefix arrives', () => {
+      let currentText = 'Hello World complete message';
+      const newText = 'Hello';
       
-      if (newText.length >= maxTextLen - 10) {
-        currentText = newText;
+      // Prefix detection: both are part of same stream
+      const isContinuation = newText.startsWith(currentText) || currentText.startsWith(newText);
+      if (isContinuation) {
+        currentText = newText.length >= currentText.length ? newText : currentText;
       }
-      // else: keep current
       
-      expect(currentText).toBe('This is a very long message with lots of content');
+      expect(currentText).toBe('Hello World complete message');
     });
 
-    test('should allow small length decreases (tolerance)', () => {
-      let currentText = 'Hello World!!!';
-      const newText = 'Hello World!'; // 2 chars shorter
-      const maxTextLen = currentText.length;
+    test('should create new bubble for non-prefix text', () => {
+      let currentText = 'Hello World';
+      const newText = 'Goodbye'; // Different text entirely
       
-      if (newText.length >= maxTextLen - 10) {
-        currentText = newText;
-      }
+      const isContinuation = newText.startsWith(currentText) || currentText.startsWith(newText);
+      const action = isContinuation ? 'update' : 'new_bubble';
       
-      expect(currentText).toBe('Hello World!');
+      expect(action).toBe('new_bubble');
     });
   });
 
