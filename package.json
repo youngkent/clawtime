@@ -2,32 +2,32 @@
   "name": "clawtime",
   "version": "1.0.0",
   "description": "Self-hosted webchat UI for OpenClaw with 3D avatars, voice mode, and passkey auth",
-  "type": "module",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js",
-    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
-    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
-    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
-    "lint": "eslint src/ public/*.js --fix",
-    "lint:check": "eslint src/ public/*.js",
-    "format": "prettier --write 'src/**/*.js' 'public/*.js'",
-    "format:check": "prettier --check 'src/**/*.js' 'public/*.js'"
-  },
   "keywords": [
-    "openclaw",
-    "chat",
-    "webchat",
     "avatar",
+    "chat",
+    "openclaw",
+    "passkey",
     "voice",
     "webauthn",
-    "passkey"
+    "webchat"
   ],
   "license": "MIT",
   "author": "Keyun Tong <tongkeyun@gmail.com>",
   "repository": {
     "type": "git",
     "url": "https://github.com/youngkent/clawtime"
+  },
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "format": "prettier --write 'src/**/*.js' 'public/*.js'",
+    "format:check": "prettier --check 'src/**/*.js' 'public/*.js'",
+    "lint": "eslint src/ public/*.js --fix",
+    "lint:check": "eslint src/ public/*.js",
+    "start": "node server.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.2.2",

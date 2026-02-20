@@ -1,11 +1,11 @@
 export default {
-  testEnvironment: 'node',
+  testEnvironment: "node",
   transform: {},
-  moduleFileExtensions: ['js', 'mjs'],
-  testMatch: ['**/tests/**/*.test.js'],
+  moduleFileExtensions: ["js", "mjs"],
+  testMatch: ["**/tests/**/*.test.js"],
   verbose: true,
   collectCoverage: true,
-  coverageDirectory: 'coverage',
-  coverageReporters: ['text', 'text-summary'],
+  coverageDirectory: "coverage",
+  coverageReporters: ["text", "text-summary"],
   testTimeout: 10000,
 };

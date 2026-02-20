@@ -61,17 +61,20 @@ journalctl --user -u clawtime-tunnel | grep -o 'https://[^ ]*trycloudflare.com' 
 ClawTime supports any TTS tool via the `TTS_COMMAND` env var. The command uses `{{TEXT}}` and `{{OUTPUT}}` placeholders.
 
 **edge-tts (recommended, free neural voices):**
+
 ```bash
 pip install edge-tts
 echo 'TTS_COMMAND=edge-tts --text "{{TEXT}}" --write-media "{{OUTPUT}}" --voice en-US-AriaNeural' >> ~/.clawtime/.env
 ```
 
 **piper (local, fast):**
+
 ```bash
 echo 'TTS_COMMAND=echo "{{TEXT}}" | piper --model en_US-lessac-medium --output_file "{{OUTPUT}}"' >> ~/.clawtime/.env
 ```
 
 **macOS say:**
+
 ```bash
 echo 'TTS_COMMAND=say -o "{{OUTPUT}}.aiff" "{{TEXT}}" && ffmpeg -i "{{OUTPUT}}.aiff" -y "{{OUTPUT}}" && rm "{{OUTPUT}}.aiff"' >> ~/.clawtime/.env
 ```

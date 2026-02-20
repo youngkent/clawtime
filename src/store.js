@@ -8,12 +8,12 @@
 // Uses buffered async writes to avoid blocking the event loop during streaming.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
-import { DATA_DIR } from './config.js';
+import crypto from "crypto";
+import fs from "fs";
+import path from "path";
+import { DATA_DIR } from "./config.js";
 
-const STORE_PATH = path.join(DATA_DIR, 'messages.json');
+const STORE_PATH = path.join(DATA_DIR, "messages.json");
 const WRITE_DEBOUNCE_MS = 200; // Batch writes within this window
 const WRITE_MAX_DELAY_MS = 1000; // Force write after this delay even if still receiving
 
@@ -40,11 +40,11 @@ function ensureLoaded() {
 function loadMessagesSync() {
   try {
     if (!fs.existsSync(STORE_PATH)) return [];
-    const raw = fs.readFileSync(STORE_PATH, 'utf8');
+    const raw = fs.readFileSync(STORE_PATH, "utf8");
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
-    console.error('[store] Failed to load messages:', err.message);
+    console.error("[store] Failed to load messages:", err.message);
     return [];
   }
 }
@@ -55,19 +55,19 @@ function loadMessagesSync() {
  */
 function schedulePersist(immediate = false) {
   pendingWrite = true;
-  
+
   // Clear existing debounce timer
   if (writeTimer) {
     clearTimeout(writeTimer);
     writeTimer = null;
   }
-  
+
   if (immediate) {
     // Immediate write (for final messages, user messages, etc.)
     doPersist();
     return;
   }
-  
+
   // Start max delay timer if not already running
   if (!writeForceTimer) {
     writeForceTimer = setTimeout(() => {
@@ -75,7 +75,7 @@ function schedulePersist(immediate = false) {
       if (pendingWrite) doPersist();
     }, WRITE_MAX_DELAY_MS);
   }
-  
+
   // Debounce timer - resets on each call
   writeTimer = setTimeout(() => {
     writeTimer = null;
@@ -89,7 +89,7 @@ function schedulePersist(immediate = false) {
 function doPersist() {
   if (!pendingWrite || messages === null) return;
   pendingWrite = false;
-  
+
   // Clear timers
   if (writeTimer) {
     clearTimeout(writeTimer);
@@ -99,12 +99,12 @@ function doPersist() {
     clearTimeout(writeForceTimer);
     writeForceTimer = null;
   }
-  
+
   // Async write - don't block
   const data = JSON.stringify(messages, null, 2);
-  fs.writeFile(STORE_PATH, data, 'utf8', (err) => {
+  fs.writeFile(STORE_PATH, data, "utf8", (err) => {
     if (err) {
-      console.error('[store] Failed to persist messages:', err.message);
+      console.error("[store] Failed to persist messages:", err.message);
     }
   });
 }
@@ -115,10 +115,10 @@ function doPersist() {
 export function flushSync() {
   if (pendingWrite && messages !== null) {
     try {
-      fs.writeFileSync(STORE_PATH, JSON.stringify(messages, null, 2), 'utf8');
+      fs.writeFileSync(STORE_PATH, JSON.stringify(messages, null, 2), "utf8");
       pendingWrite = false;
     } catch (err) {
-      console.error('[store] Failed to flush messages:', err.message);
+      console.error("[store] Failed to flush messages:", err.message);
     }
   }
 }
@@ -137,7 +137,7 @@ export function loadMessages() {
 export function cleanupIncompleteMessages() {
   const msgs = ensureLoaded();
   let cleaned = 0;
-  
+
   for (const m of msgs) {
     if (m.streaming) {
       delete m.streaming;
@@ -145,7 +145,7 @@ export function cleanupIncompleteMessages() {
       cleaned++;
     }
   }
-  
+
   if (cleaned > 0) {
     console.log(`[store] Cleaned ${cleaned} streaming flags on startup`);
     schedulePersist(true); // Immediate write for cleanup
@@ -158,12 +158,14 @@ export function cleanupIncompleteMessages() {
  * @returns {object} The saved message with id and timestamp
  */
 export function saveMessage(msg) {
-  console.log(`[store] saveMessage: role=${msg.role}, textLen=${msg.text?.length || 0}, widget=${!!msg.widget}`);
+  console.log(
+    `[store] saveMessage: role=${msg.role}, textLen=${msg.text?.length || 0}, widget=${!!msg.widget}`,
+  );
   const msgs = ensureLoaded();
   const entry = {
     id: crypto.randomUUID(),
     role: msg.role,
-    text: msg.text || '',
+    text: msg.text || "",
     timestamp: msg.timestamp || new Date().toISOString(),
   };
   if (msg.images && msg.images.length > 0) {
@@ -210,23 +212,25 @@ export function saveWidgetResponse(widgetId, response) {
  * Save or update a bot message by messageId (not runId).
  * Simple: find by id, update text. No complex prefix detection needed
  * since websocket now properly tracks message boundaries.
- * 
+ *
  * @param {string} messageId - The unique message ID
  * @param {{ text: string, images?: string[], final?: boolean }} data
  */
 export function saveOrUpdateByMessageId(messageId, data) {
   const msgs = ensureLoaded();
-  const idx = msgs.findIndex(m => m.id === messageId);
-  
-  console.log(`[store] saveOrUpdateByMessageId: id=${messageId?.slice(0,8)}, exists=${idx !== -1}, final=${data.final}, textLen=${data.text?.length || 0}`);
-  
-  const newText = data.text || '';
-  
+  const idx = msgs.findIndex((m) => m.id === messageId);
+
+  console.log(
+    `[store] saveOrUpdateByMessageId: id=${messageId?.slice(0, 8)}, exists=${idx !== -1}, final=${data.final}, textLen=${data.text?.length || 0}`,
+  );
+
+  const newText = data.text || "";
+
   if (idx === -1) {
     // New message
     const entry = {
       id: messageId,
-      role: 'bot',
+      role: "bot",
       text: newText,
       lastBlockText: newText, // Track current block for accumulation
       timestamp: new Date().toISOString(),
@@ -240,12 +244,12 @@ export function saveOrUpdateByMessageId(messageId, data) {
     return { text: entry.text, images: entry.images };
   } else {
     // Update existing message
-    const existingText = msgs[idx].text || '';
+    const existingText = msgs[idx].text || "";
     const lastBlockText = msgs[idx].lastBlockText || existingText;
-    
+
     // Check if this is a continuation of current block or a new block
     const isContinuation = newText.startsWith(lastBlockText) || lastBlockText.startsWith(newText);
-    
+
     if (isContinuation) {
       // Same block — update with longer text
       const longerText = newText.length > lastBlockText.length ? newText : lastBlockText;
@@ -256,11 +260,11 @@ export function saveOrUpdateByMessageId(messageId, data) {
     } else {
       // New block — append with separator
       console.log(`[store] New text block detected, appending`);
-      const separator = existingText ? '\n\n' : '';
+      const separator = existingText ? "\n\n" : "";
       msgs[idx].text = existingText + separator + newText;
       msgs[idx].lastBlockText = newText;
     }
-    
+
     if (data.images && data.images.length > 0) {
       msgs[idx].images = [...(msgs[idx].images || []), ...data.images];
     }

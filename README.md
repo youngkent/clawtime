@@ -22,11 +22,13 @@ Unlike hosted chatbots where your conversations flow through corporate servers, 
 ## Motivation
 
 Most AI chat interfaces are either:
+
 - **Cloud-hosted** — your data goes to someone else's servers
 - **Text-only** — no voice, no visual feedback, feels robotic
 - **Generic** — same UI for everyone, no personality
 
 ClawTime solves all three:
+
 - **100% local** — direct connection to your self-hosted agent
 - **Multimodal** — voice input, spoken responses, animated avatar
 - **Customizable** — your agent can modify its own interface
@@ -34,19 +36,23 @@ ClawTime solves all three:
 ## Key Features
 
 ### 🏠 Private by Design
+
 - Direct WebSocket connection to your OpenClaw gateway
 - All data stored locally (`~/.clawtime/`)
 - No analytics, no tracking, no data collection
 - E2E encryption (ECDH P-256 + AES-256-GCM)
 
 ### 🎤 Voice Conversations
+
 - Tap the avatar to start talking
 - Browser-based speech recognition
 - Server-side TTS via `edge-tts` (no API keys needed)
 - Barge-in support — interrupt anytime
 
 ### 🦞 Animated 3D Avatar
+
 A voxel-style 3D character that reflects your agent's state:
+
 - **Idle** — gentle breathing, occasional blinks
 - **Thinking** — looking around, processing
 - **Working** — typing on laptop (extended tasks)
@@ -57,12 +63,15 @@ A voxel-style 3D character that reflects your agent's state:
 Fully customizable — create avatars that match your agent's personality.
 
 ### 🔐 Passwordless Authentication
+
 - WebAuthn passkeys (Face ID, fingerprint, security key)
 - No passwords to remember or leak
 - One-time setup token for first registration
 
 ### 🛠️ Agent-Modifiable
+
 Your AI agent has full access to the codebase and can:
+
 - Customize the UI in real-time
 - Add new features
 - Fix issues without human intervention

@@ -2,7 +2,7 @@
 // § 5. SECURITY — Rate Limiting, Headers, Audit Logging
 // ═══════════════════════════════════════════════════════════════════════════════
 
-import fs from 'fs';
+import fs from "fs";
 
 const rateLimitMap = new Map(); // ip → { count, resetAt }
 const RATE_LIMIT_WINDOW = 60000; // 1 minute
@@ -29,16 +29,19 @@ setInterval(() => {
 
 // ── Security Headers ──
 export function setSecurityHeaders(res) {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; connect-src 'self' wss: ws:; media-src 'self' blob:; img-src 'self' data: blob: https: http:;");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; connect-src 'self' wss: ws:; media-src 'self' blob:; img-src 'self' data: blob: https: http:;",
+  );
 }
 
 // ── Audit Logging ──
-const AUDIT_LOG = '/tmp/clawtime-audit.log';
+const AUDIT_LOG = "/tmp/clawtime-audit.log";
 export function auditLog(event, details = {}) {
   const entry = JSON.stringify({ ts: new Date().toISOString(), event, ...details });
-  fs.appendFileSync(AUDIT_LOG, entry + '\n');
+  fs.appendFileSync(AUDIT_LOG, entry + "\n");
 }

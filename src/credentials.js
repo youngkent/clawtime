@@ -2,12 +2,12 @@
 // § 6. CREDENTIAL PERSISTENCE (WebAuthn passkeys stored as JSON)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-import fs from 'fs';
-import { CREDENTIALS_FILE } from './config.js';
+import fs from "fs";
+import { CREDENTIALS_FILE } from "./config.js";
 
 export function loadCredentials() {
   try {
-    const data = fs.readFileSync(CREDENTIALS_FILE, 'utf8');
+    const data = fs.readFileSync(CREDENTIALS_FILE, "utf8");
     return JSON.parse(data);
   } catch {
     return [];

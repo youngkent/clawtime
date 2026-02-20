@@ -13,7 +13,9 @@ Widgets are interactive UI components that agents can send to users. They enable
   "type": "widget",
   "id": "unique-widget-id",
   "widget": "widget-type",
-  "data": { /* widget-specific */ },
+  "data": {
+    /* widget-specific */
+  },
   "inline": false
 }
 ```
@@ -44,6 +46,7 @@ Widgets are interactive UI components that agents can send to users. They enable
 Horizontal/vertical button group for quick selection.
 
 **Data:**
+
 ```json
 {
   "prompt": "What would you like?",        // optional header text
@@ -60,6 +63,7 @@ Horizontal/vertical button group for quick selection.
 ```
 
 **Response:**
+
 ```json
 { "value": "coffee" }
 // or for multiSelect:
@@ -73,6 +77,7 @@ Horizontal/vertical button group for quick selection.
 Yes/No or custom confirm/cancel actions.
 
 **Data:**
+
 ```json
 {
   "title": "Delete file?",
@@ -85,6 +90,7 @@ Yes/No or custom confirm/cancel actions.
 ```
 
 **Response:**
+
 ```json
 { "value": true }   // confirmed
 { "value": false }  // cancelled
@@ -97,19 +103,21 @@ Yes/No or custom confirm/cancel actions.
 Shows task progress with optional status text.
 
 **Data:**
+
 ```json
 {
   "label": "Uploading files...",
-  "percent": 45,                    // 0-100, or null for indeterminate
-  "status": "3 of 7 files",         // optional status text
-  "showPercent": true,              // show percentage number
-  "cancelable": true                // show cancel button
+  "percent": 45, // 0-100, or null for indeterminate
+  "status": "3 of 7 files", // optional status text
+  "showPercent": true, // show percentage number
+  "cancelable": true // show cancel button
 }
 ```
 
 **Update:** Agent sends new widget message with same `id` to update progress.
 
 **Response (if cancelled):**
+
 ```json
 { "action": "cancel" }
 ```
@@ -121,18 +129,20 @@ Shows task progress with optional status text.
 Code display with copy button, syntax highlighting, and optional run button.
 
 **Data:**
+
 ```json
 {
   "code": "console.log('hello');",
-  "language": "javascript",         // for syntax highlighting
-  "filename": "example.js",         // optional filename header
-  "showCopy": true,                 // show copy button (default: true)
-  "showRun": false,                 // show run button
-  "wrap": true                      // wrap long lines
+  "language": "javascript", // for syntax highlighting
+  "filename": "example.js", // optional filename header
+  "showCopy": true, // show copy button (default: true)
+  "showRun": false, // show run button
+  "wrap": true // wrap long lines
 }
 ```
 
 **Response:**
+
 ```json
 { "action": "copy" }
 { "action": "run" }
@@ -145,6 +155,7 @@ Code display with copy button, syntax highlighting, and optional run button.
 Collect multiple inputs at once.
 
 **Data:**
+
 ```json
 {
   "title": "Create Event",
@@ -154,8 +165,12 @@ Collect multiple inputs at once.
     { "name": "time", "type": "time", "label": "Time" },
     { "name": "location", "type": "text", "label": "Location", "placeholder": "Optional" },
     { "name": "notify", "type": "checkbox", "label": "Send me a reminder" },
-    { "name": "priority", "type": "select", "label": "Priority", 
-      "options": ["Low", "Medium", "High"] }
+    {
+      "name": "priority",
+      "type": "select",
+      "label": "Priority",
+      "options": ["Low", "Medium", "High"]
+    }
   ],
   "submitLabel": "Create",
   "cancelLabel": "Cancel"
@@ -165,6 +180,7 @@ Collect multiple inputs at once.
 **Field types:** `text`, `textarea`, `number`, `email`, `tel`, `date`, `time`, `datetime`, `select`, `checkbox`, `radio`, `range`
 
 **Response:**
+
 ```json
 {
   "value": {
@@ -185,6 +201,7 @@ Collect multiple inputs at once.
 Checkbox list with add/remove capabilities.
 
 **Data:**
+
 ```json
 {
   "title": "Shopping List",
@@ -193,13 +210,14 @@ Checkbox list with add/remove capabilities.
     { "id": "2", "text": "Call dentist", "done": true },
     { "id": "3", "text": "Fix bug #123", "done": false }
   ],
-  "allowAdd": true,                 // show add item input
-  "allowRemove": true,              // show remove buttons
-  "allowReorder": false             // drag to reorder
+  "allowAdd": true, // show add item input
+  "allowRemove": true, // show remove buttons
+  "allowReorder": false // drag to reorder
 }
 ```
 
 **Response (on any change):**
+
 ```json
 {
   "value": {
@@ -209,7 +227,7 @@ Checkbox list with add/remove capabilities.
       { "id": "3", "text": "Fix bug #123", "done": false },
       { "id": "4", "text": "New item", "done": false }
     ],
-    "action": "toggle",            // toggle, add, remove, reorder
+    "action": "toggle", // toggle, add, remove, reorder
     "itemId": "1"
   }
 }
@@ -222,6 +240,7 @@ Checkbox list with add/remove capabilities.
 Swipeable gallery of images or cards.
 
 **Data:**
+
 ```json
 {
   "items": [
@@ -229,14 +248,15 @@ Swipeable gallery of images or cards.
     { "type": "image", "url": "/media/img2.jpg", "caption": "Mountain view" },
     { "type": "card", "title": "Option A", "description": "...", "image": "..." }
   ],
-  "showDots": true,                // pagination dots
-  "showArrows": true,              // prev/next arrows
-  "autoPlay": false,               // auto-advance
-  "selectable": true               // can select an item
+  "showDots": true, // pagination dots
+  "showArrows": true, // prev/next arrows
+  "autoPlay": false, // auto-advance
+  "selectable": true // can select an item
 }
 ```
 
 **Response (if selectable):**
+
 ```json
 { "value": { "index": 2, "item": {...} } }
 ```
@@ -248,6 +268,7 @@ Swipeable gallery of images or cards.
 Native date/time selection.
 
 **Data:**
+
 ```json
 {
   "label": "Select a date",
@@ -260,6 +281,7 @@ Native date/time selection.
 ```
 
 **Response:**
+
 ```json
 { "value": "2026-02-15" }          // ISO format
 { "value": "2026-02-15T14:30:00" } // for datetime
@@ -272,6 +294,7 @@ Native date/time selection.
 Single or multi-choice poll with optional live results.
 
 **Data:**
+
 ```json
 {
   "question": "Where should we eat?",
@@ -280,15 +303,16 @@ Single or multi-choice poll with optional live results.
     { "id": "b", "text": "Sushi Bar", "votes": 5 },
     { "id": "c", "text": "Tacos", "votes": 2 }
   ],
-  "multiSelect": false,            // allow multiple votes
-  "showResults": true,             // show vote counts
-  "showVoters": false,             // show who voted for what
-  "allowChange": true,             // can change vote
-  "myVote": "b"                    // current user's vote (if any)
+  "multiSelect": false, // allow multiple votes
+  "showResults": true, // show vote counts
+  "showVoters": false, // show who voted for what
+  "allowChange": true, // can change vote
+  "myVote": "b" // current user's vote (if any)
 }
 ```
 
 **Response:**
+
 ```json
 { "value": "a" }
 // or for multiSelect:
@@ -302,6 +326,7 @@ Single or multi-choice poll with optional live results.
 Quick rating input.
 
 **Data:**
+
 ```json
 {
   "label": "How was your experience?",
@@ -313,6 +338,7 @@ Quick rating input.
 ```
 
 **Response:**
+
 ```json
 { "value": 4 }
 ```
@@ -324,6 +350,7 @@ Quick rating input.
 Non-interactive notification banner.
 
 **Data:**
+
 ```json
 {
   "type": "info" | "success" | "warning" | "error",
@@ -335,6 +362,7 @@ Non-interactive notification banner.
 ```
 
 **Response (if dismissed):**
+
 ```json
 { "action": "dismiss" }
 ```
@@ -346,11 +374,12 @@ Non-interactive notification banner.
 Custom status indicator (replaces standard typing animation).
 
 **Data:**
+
 ```json
 {
   "status": "Searching the web...",
-  "icon": "🔍",                    // optional emoji/icon
-  "progress": null                 // optional 0-100 for progress bar
+  "icon": "🔍", // optional emoji/icon
+  "progress": null // optional 0-100 for progress bar
 }
 ```
 
@@ -378,17 +407,20 @@ No response — display only.
 ## Implementation Priority
 
 ### Phase 1 (Core)
+
 1. `buttons` — Quick replies
 2. `confirm` — Confirmations
 3. `code` — Code with copy button
 4. `progress` — Progress indicator
 
 ### Phase 2 (Forms)
+
 5. `form` — Multi-field forms
 6. `datepicker` — Date/time selection
 7. `tasks` — Interactive task list
 
 ### Phase 3 (Rich)
+
 8. `carousel` — Image gallery
 9. `poll` — Voting
 10. `rating` — Quick ratings

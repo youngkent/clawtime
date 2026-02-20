@@ -17,23 +17,23 @@
 // bot is still generating text. Remaining unspoken text is flushed on 'final'.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import { TTS_DIR, TTS_COMMAND } from './config.js';
+import { exec } from "child_process";
+import crypto from "crypto";
+import fs from "fs";
+import path from "path";
+import { promisify } from "util";
+import { TTS_DIR, TTS_COMMAND } from "./config.js";
 
 const execAsync = promisify(exec);
 
 export function cleanTextForTTS(text) {
   return text
-    .replace(/```[\s\S]*?```/g, ' code block ')
-    .replace(/`[^`]+`/g, '')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/[#*_~>]/g, '')
-    .replace(/https?:\/\/\S+/g, ' link ')
-    .replace(/\s+/g, ' ')
+    .replace(/```[\s\S]*?```/g, " code block ")
+    .replace(/`[^`]+`/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[#*_~>]/g, "")
+    .replace(/https?:\/\/\S+/g, " link ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -59,24 +59,31 @@ async function processTTSQueue(visitorId) {
   while (q.queue.length > 0) {
     const { clean, clientWs, runId } = q.queue.shift();
     try {
-      const ttsId = crypto.randomBytes(8).toString('hex');
+      const ttsId = crypto.randomBytes(8).toString("hex");
       const ttsFile = `tts-${ttsId}.mp3`;
       const ttsPath = path.join(TTS_DIR, ttsFile);
       // Build command from template with secure shell escaping
       // Use POSIX single-quote method: wrap in single quotes, escape embedded single quotes as '\''
       const escapedText = clean.replace(/'/g, "'\\''");
       // Replace "{{TEXT}}" or '{{TEXT}}' or {{TEXT}} with properly quoted text
-      const cmd = TTS_COMMAND
-        .replace(/"?\{\{TEXT\}\}"?/g, "'" + escapedText + "'")
-        .replace(/\{\{OUTPUT\}\}/g, ttsPath);
+      const cmd = TTS_COMMAND.replace(/"?\{\{TEXT\}\}"?/g, "'" + escapedText + "'").replace(
+        /\{\{OUTPUT\}\}/g,
+        ttsPath,
+      );
       await execAsync(cmd);
       if (clientWs.readyState === 1) {
         const audioBuffer = fs.readFileSync(ttsPath);
-        const audioData = audioBuffer.toString('base64');
+        const audioData = audioBuffer.toString("base64");
         const sendFn = clientWs._secureSend || ((d) => clientWs.send(d));
-        sendFn(JSON.stringify({ type: 'tts_audio', audioData, runId: runId || null }));
+        sendFn(JSON.stringify({ type: "tts_audio", audioData, runId: runId || null }));
       }
-      setTimeout(() => { try { fs.unlinkSync(ttsPath); } catch { /* ignore */ } }, 30000);
+      setTimeout(() => {
+        try {
+          fs.unlinkSync(ttsPath);
+        } catch {
+          /* ignore */
+        }
+      }, 30000);
     } catch (err) {
       console.error(`[${visitorId}] TTS error:`, err.message);
     }
