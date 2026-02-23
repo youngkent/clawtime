@@ -284,7 +284,7 @@ export async function handleRequest(req, res) {
       const avatars = [];
 
       // Scan avatars from ~/.clawtime/avatars/ only
-      // (public/avatars/ contains examples that are copied on first run)
+      // (templates/avatars/ contains examples that are copied on first run)
       const avatarsDir = path.join(DATA_DIR, "avatars");
       try {
         const files = fs.readdirSync(avatarsDir);

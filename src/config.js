@@ -11,6 +11,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.join(__dirname, "..");
 const PUBLIC_DIR = path.join(ROOT_DIR, "public");
+const TEMPLATES_DIR = path.join(ROOT_DIR, "templates");
 const DATA_DIR = process.env.CLAWTIME_DATA_DIR || path.join(os.homedir(), ".clawtime");
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -39,10 +40,10 @@ const CREDENTIALS_FILE = path.join(DATA_DIR, "credentials.json");
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, "avatars"), { recursive: true });
 
-// Copy default avatar(s) from public/avatars/ to ~/.clawtime/avatars/ if not present
+// Copy default avatar(s) from templates/avatars/ to ~/.clawtime/avatars/ if not present
 const defaultAvatars = ["lobster"];
 for (const avatar of defaultAvatars) {
-  const src = path.join(PUBLIC_DIR, "avatars", avatar + ".js");
+  const src = path.join(TEMPLATES_DIR, "avatars", avatar + ".js");
   const dst = path.join(DATA_DIR, "avatars", avatar + ".js");
   if (fs.existsSync(src) && !fs.existsSync(dst)) {
     fs.copyFileSync(src, dst);
@@ -115,6 +116,7 @@ const publicConfig = {
 export {
   ROOT_DIR,
   PUBLIC_DIR,
+  TEMPLATES_DIR,
   DATA_DIR,
   PORT,
   GW_URL,

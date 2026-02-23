@@ -182,10 +182,21 @@ export function saveMessage(msg) {
 /**
  * Get the most recent messages from the store.
  * @param {number} [limit=200] Maximum number of messages to return
+ * @param {string} [since] - Optional ISO timestamp; return only messages after this time
  * @returns {object[]} Array of message objects
  */
-export function getMessages(limit = 200) {
-  const msgs = ensureLoaded();
+export function getMessages(limit = 200, since = null) {
+  let msgs = ensureLoaded();
+  
+  // Filter by timestamp if "since" provided (for reconnect sync)
+  if (since) {
+    const sinceTime = new Date(since).getTime();
+    msgs = msgs.filter(m => {
+      const msgTime = m.timestamp ? new Date(m.timestamp).getTime() : 0;
+      return msgTime > sinceTime;
+    });
+  }
+  
   if (msgs.length <= limit) return msgs;
   return msgs.slice(-limit);
 }

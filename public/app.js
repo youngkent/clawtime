@@ -110,6 +110,7 @@ let pendingChatEvents = [];
 const deltaGapTimer = null;
 let activeRunning = false;
 const avatarIdleTimer = null; // Track idle timeout for cancellation
+let lastMessageTimestamp = null; // Track for reconnect sync
 
 function showLoadMoreIndicator() {
   let indicator = document.getElementById("load-more");
@@ -847,6 +848,16 @@ function addMessage(text, sender, opts) {
       messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 150;
     if (isNearBottom) {
       messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+  }
+
+  // Track last message timestamp for reconnect sync
+  if (opts.timestamp) {
+    const ts = typeof opts.timestamp === 'number' 
+      ? new Date(opts.timestamp).toISOString() 
+      : opts.timestamp;
+    if (!lastMessageTimestamp || ts > lastMessageTimestamp) {
+      lastMessageTimestamp = ts;
     }
   }
 
@@ -2019,7 +2030,12 @@ function connectWs() {
 
       if (msg.type === "connected") {
         setStatus("online");
-        secureSend(JSON.stringify({ type: "get_history" }));
+        // On reconnect, request only messages since last seen timestamp
+        const historyReq = { type: "get_history" };
+        if (lastMessageTimestamp) {
+          historyReq.since = lastMessageTimestamp;
+        }
+        secureSend(JSON.stringify(historyReq));
         // Restore exact avatar state from server
         if (msg.avatarState && window.setAvatarState) {
           // Use original function to avoid re-sending to server
@@ -2195,27 +2211,39 @@ function connectWs() {
       // just like freshly-sent images.
       if (msg.type === "history") {
         const rawMessages = msg.messages || [];
+        const isSinceSync = msg.since === true; // Reconnect sync with "since" param
 
         // Check if we already have messages displayed (reconnect scenario)
         const existingMsgCount = messagesEl.querySelectorAll(".message").length;
         const isReconnect = existingMsgCount > 0;
 
         if (isReconnect) {
-          // Reconnect — don't re-render, just update historyMessages for "load more"
-          // This preserves any in-flight streaming messages
-          historyMessages = [];
-          for (let i = 0; i < rawMessages.length; i++) {
-            const hm = rawMessages[i];
-            const hmText = hm.text || (typeof hm.content === "string" ? hm.content : "");
-            if (hmText.trim()) {
-              historyMessages.push({
-                role: hm.role === "user" ? "user" : "bot",
-                text: hmText,
-                timestamp: hm.timestamp,
-              });
+          // Reconnect — check for new messages that need to be displayed
+          if (isSinceSync && rawMessages.length > 0) {
+            // Render any messages that arrived while disconnected
+            for (let i = 0; i < rawMessages.length; i++) {
+              const hm = rawMessages[i];
+              const hmText = hm.text || (typeof hm.content === "string" ? hm.content : "");
+              const role = hm.role === "user" ? "user" : "bot";
+              if (hmText.trim()) {
+                addMessage(hmText, role, { timestamp: hm.timestamp ? new Date(hm.timestamp).getTime() : Date.now() });
+                // Update last timestamp
+                if (hm.timestamp) {
+                  lastMessageTimestamp = hm.timestamp;
+                }
+              }
+              // Handle images in missed messages
+              if (hm.images && hm.images.length > 0) {
+                for (let img of hm.images) {
+                  addImageMessage(img, role);
+                }
+              }
             }
           }
-          historyIndex = Math.max(0, historyMessages.length - HISTORY_PAGE_SIZE);
+          // Update historyMessages for "load more"
+          historyMessages = [];
+          // Re-fetch full history for load-more (without since filter)
+          // This is a lightweight operation since we don't re-render
           historyLoaded = true;
           return;
         }
@@ -2339,7 +2367,11 @@ function connectWs() {
 
       // Handle history sync after reconnect (server pulled missed messages)
       if (msg.type === "history_sync") {
-        secureSend(JSON.stringify({ type: "get_history" }));
+        const historyReq = { type: "get_history" };
+        if (lastMessageTimestamp) {
+          historyReq.since = lastMessageTimestamp;
+        }
+        secureSend(JSON.stringify(historyReq));
         return;
       }
 

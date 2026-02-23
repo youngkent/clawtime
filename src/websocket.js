@@ -635,8 +635,10 @@ export function setupWebSocket(server, options = {}) {
 
         // ── Get History ──
         if (msg.type === "get_history") {
-          const messages = getMessages(200);
-          secureSend(JSON.stringify({ type: "history", messages }));
+          // Support "since" parameter for reconnect sync
+          const since = msg.since || null;
+          const messages = getMessages(200, since);
+          secureSend(JSON.stringify({ type: "history", messages, since: !!since }));
         }
 
         // ── Image Upload ──

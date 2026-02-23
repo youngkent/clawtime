@@ -336,7 +336,7 @@ Each state should be **visually distinct** with unique activities and indicators
 
 ### Avatar Design Tips
 
-- Study `public/avatars/` in the ClawTime repo for example avatars (lobster.js is copied to `~/.clawtime/avatars/` on first run)
+- Study `templates/avatars/` in the ClawTime repo for example avatars (lobster.js is copied to `~/.clawtime/avatars/` on first run)
 - Use voxel style (boxes, spheres) — matches ClawTime aesthetic
 - Implement **all** states with distinct visuals — don't make states look similar
 - Add connection status indicator (ring/glow on platform)
