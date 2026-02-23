@@ -1646,9 +1646,11 @@ body {
   cursor: pointer;
   transition: all 0.2s ease;
 }
-.avatar-card:hover {
-  border-color: var(--accent);
-  transform: translateY(-2px);
+@media (hover: hover) {
+  .avatar-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+  }
 }
 .avatar-card.selected {
   border-color: var(--accent);
@@ -1681,28 +1683,42 @@ body {
   margin-top: 6px;
   display: inline-block;
 }
-.avatar-card-delete {
+.avatar-card button.avatar-card-delete {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 20px;
-  height: 20px;
+  top: -6px;
+  right: -6px;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  max-width: 22px;
   padding: 0;
-  border: none;
+  margin: 0;
+  border: 2px solid var(--surface);
   border-radius: 50%;
-  background: rgba(239, 68, 68, 0.8);
+  background: #ef4444;
   color: white;
   font-size: 14px;
-  line-height: 1;
+  line-height: 18px;
+  text-align: center;
+  font-weight: normal;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s;
+  pointer-events: none;
+  transition: opacity 0.15s, transform 0.1s;
+  box-sizing: border-box;
 }
-.avatar-card:hover .avatar-card-delete {
+.avatar-card.previewing button.avatar-card-delete {
   opacity: 1;
+  pointer-events: auto;
 }
-.avatar-card-delete:hover {
-  background: #ef4444;
+@media (hover: hover) {
+  .avatar-card:hover button.avatar-card-delete {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .avatar-card button.avatar-card-delete:hover {
+    transform: scale(1.1);
+  }
 }
 
 /* Avatar Manager - dont block side section */

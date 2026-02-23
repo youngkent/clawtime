@@ -5075,9 +5075,15 @@ callEndBtnEl.addEventListener("touchend", function (e) {
         av.description +
         "</div>";
       if (isSelected) html += '<div class="avatar-card-badge">Current</div>';
+      // Add delete button (hidden for current avatar)
+      if (!isSelected) {
+        html += '<button class="avatar-card-delete" data-avatar-id="' + av.id + '" title="Delete">×</button>';
+      }
       card.innerHTML = html;
 
-      card.onclick = function () {
+      card.onclick = function (e) {
+        // Don't trigger card click if delete button was clicked
+        if (e.target.classList.contains("avatar-card-delete")) return;
         previewingAvatar = av.id;
         renderAvatarList();
         updateButtonVisibility();
@@ -5086,6 +5092,33 @@ callEndBtnEl.addEventListener("touchend", function (e) {
           startPreviewAnimation();
         });
       };
+      
+      // Handle delete button click
+      const deleteBtn = card.querySelector(".avatar-card-delete");
+      if (deleteBtn) {
+        deleteBtn.onclick = function (e) {
+          e.stopPropagation();
+          const avatarId = this.getAttribute("data-avatar-id");
+          if (!confirm("Delete this avatar?")) return;
+          fetch("/api/avatar/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ avatar: avatarId }),
+          })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+              if (data.success) {
+                availableAvatars = availableAvatars.filter(function (a) {
+                  return a.id !== avatarId;
+                });
+                renderAvatarList();
+              } else {
+                alert(data.error || "Failed to delete avatar");
+              }
+            });
+        };
+      }
+      
       avatarList.appendChild(card);
     });
     updateButtonVisibility();

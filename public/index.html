@@ -113,9 +113,11 @@
           id="avatarList"
           style="
             margin-bottom: 16px;
+            padding: 8px;
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-            gap: 12px;
+            gap: 16px;
+            overflow: visible;
           "
         ></div>
         <div style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap">
@@ -128,7 +130,7 @@
           >
             Close
           </button>
-          <button id="deleteAvatarBtn" style="background: #ef4444; display: none">🗑 Delete</button>
+          <!-- Delete button moved to individual avatar cards -->
         </div>
         <p class="desc" style="margin-top: 12px; font-size: 0.75rem">
           To create a new avatar, type "create avatar" in the chat.
